@@ -26,9 +26,15 @@ def validator_agent_node(state: GraphState) -> dict:
         return {"spec_feedback": "VALID"}
 
     # Build tools for codebase-awareness
-    workspace_dir = os.path.abspath(
+    repo_url = state.get("repo_url", "")
+    base_workspace = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "workspace")
     )
+    if repo_url:
+        repo_name = repo_url.split("/")[-1].replace(".git", "")
+        workspace_dir = os.path.join(base_workspace, repo_name)
+    else:
+        workspace_dir = base_workspace
     ast_tools = get_ast_tools()
     graph_rag_tools = get_graph_rag_tools()
     all_tools = ast_tools + graph_rag_tools

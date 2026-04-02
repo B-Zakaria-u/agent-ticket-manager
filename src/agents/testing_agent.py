@@ -3,245 +3,444 @@ from src.state import GraphState
 from src.config.llm import get_llm
 from src.utils.logger import log_llm_interaction, log_chat_interaction
 from src.utils.language_detector import detect_language
-from src.tools.folders import initiate_directory, clear_directory
+from src.tools.folders import initiate_directory
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+from src.tools.files import get_file_tools
 
 
-# ── Language → test framework + script.sh template ──────────────────────────
-_TEST_FRAMEWORK_HINTS: dict[str, dict[str, str]] = {
-    "Python": {
-        "framework": "pytest",
-        "file_pattern": "test_<module>.py in workspace/tests/",
+# ── QA tool catalogue ──────────────────────────────────────────────────────────
+_QA_TOOLS: dict[str, dict[str, str]] = {
+    "selenium": {
+        "concern": "Web UI interaction, button clicks, form submission, DOM validation, navigation",
+        "install": "pip install selenium webdriver-manager pytest",
         "script_hint": (
             "#!/bin/bash\n"
-            "pip install -r /workspace/requirements.txt 2>/dev/null || true\n"
-            "pip install pytest\n"
-            "cd /workspace && pytest -v"
+            "pip install selenium webdriver-manager pytest\n"
+            "cd /workspace/{workspace_path} && pytest -v tests/test_ui_*"
         ),
     },
-    "Java": {
-        "framework": "JUnit 5 + Mockito",
-        "file_pattern": "<Module>Test.java in src/test/java/",
+    "playwright": {
+        "concern": "Modern web UI, cross-browser E2E, screenshot/visual regression, JS-heavy SPAs",
+        "install": "pip install playwright pytest-playwright && playwright install",
         "script_hint": (
             "#!/bin/bash\n"
-            "cd /workspace && mvn test -B"
-            " # OR: ./gradlew test"
+            "pip install playwright pytest-playwright\n"
+            "playwright install --with-deps chromium\n"
+            "cd /workspace/{workspace_path} && pytest -v tests/test_e2e_*"
         ),
     },
-    "Kotlin": {
-        "framework": "Kotest or JUnit 5",
-        "file_pattern": "<Module>Test.kt in src/test/kotlin/",
-        "script_hint": (
-            "#!/bin/bash\n"
-            "cd /workspace && ./gradlew test"
-        ),
-    },
-    "PHP": {
-        "framework": "PHPUnit",
-        "file_pattern": "<Module>Test.php in tests/",
-        "script_hint": (
-            "#!/bin/bash\n"
-            "apt-get update -y && apt-get install -y php php-cli composer 2>/dev/null\n"
-            "cd /workspace && composer install --no-interaction\n"
-            "./vendor/bin/phpunit --testdox"
-        ),
-    },
-    "JavaScript": {
-        "framework": "Jest",
-        "file_pattern": "<module>.test.js in __tests__/ or alongside source",
+    "cypress": {
+        "concern": "JavaScript/TypeScript front-end E2E, real-time reload, component testing",
+        "install": "npm install cypress --save-dev",
         "script_hint": (
             "#!/bin/bash\n"
             "apt-get update -y && apt-get install -y nodejs npm 2>/dev/null\n"
-            "cd /workspace && npm install\n"
-            "npm test"
+            "cd /workspace/{workspace_path} && npm install\n"
+            "npx cypress run"
         ),
     },
-    "TypeScript": {
-        "framework": "Jest + ts-jest or Vitest",
-        "file_pattern": "<module>.test.ts in __tests__/ or alongside source",
+    "appium": {
+        "concern": "Native/hybrid mobile app testing (iOS & Android), gestures, device simulation",
+        "install": "pip install Appium-Python-Client pytest",
+        "script_hint": (
+            "#!/bin/bash\n"
+            "pip install Appium-Python-Client pytest\n"
+            "# Appium server must be running: appium &\n"
+            "cd /workspace/{workspace_path} && pytest -v tests/test_mobile_*"
+        ),
+    },
+    "jmeter": {
+        "concern": "Load testing, stress testing, throughput, latency, API performance at scale",
+        "install": "apt-get install -y default-jre && wget apache-jmeter archive",
+        "script_hint": (
+            "#!/bin/bash\n"
+            "apt-get update -y && apt-get install -y default-jre wget tar 2>/dev/null\n"
+            "wget -q https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz\n"
+            "tar -xzf apache-jmeter-5.6.3.tgz\n"
+            "cd /workspace/{workspace_path} && ../apache-jmeter-5.6.3/bin/jmeter -n -t tests/load_test.jmx -l results.jtl"
+        ),
+    },
+    "locust": {
+        "concern": "Python-native load/stress testing, concurrent users, ramp-up scenarios",
+        "install": "pip install locust",
+        "script_hint": (
+            "#!/bin/bash\n"
+            "pip install locust\n"
+            "cd /workspace/{workspace_path} && locust -f tests/locustfile.py --headless -u 100 -r 10 --run-time 1m"
+        ),
+    },
+    "requests_pytest": {
+        "concern": "REST/GraphQL API contract testing, status codes, response schema, auth flows",
+        "install": "pip install requests pytest jsonschema",
+        "script_hint": (
+            "#!/bin/bash\n"
+            "pip install requests pytest jsonschema\n"
+            "cd /workspace/{workspace_path} && pytest -v tests/test_api_*"
+        ),
+    },
+    "postman_newman": {
+        "concern": "Existing Postman collections, CI-friendly API regression runs",
+        "install": "npm install -g newman",
         "script_hint": (
             "#!/bin/bash\n"
             "apt-get update -y && apt-get install -y nodejs npm 2>/dev/null\n"
-            "cd /workspace && npm install\n"
-            "npm test"
+            "npm install -g newman\n"
+            "cd /workspace/{workspace_path} && newman run tests/collection.json -e tests/environment.json"
         ),
     },
-    "Go": {
-        "framework": "testing (standard library)",
-        "file_pattern": "<module>_test.go alongside source files",
+    "owasp_zap": {
+        "concern": "Security scanning, XSS, SQL injection, OWASP Top-10 vulnerability detection",
+        "install": "docker pull ghcr.io/zaproxy/zaproxy:stable",
         "script_hint": (
             "#!/bin/bash\n"
-            "apt-get update -y && apt-get install -y golang 2>/dev/null\n"
-            "cd /workspace && go test ./..."
+            "apt-get update -y && apt-get install -y docker.io 2>/dev/null\n"
+            "docker run -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://target-url"
         ),
     },
-    "Ruby": {
-        "framework": "RSpec or Minitest",
-        "file_pattern": "<module>_spec.rb in spec/ or test_<module>.rb in test/",
+    "axe_playwright": {
+        "concern": "WCAG accessibility compliance, screen-reader compatibility, colour contrast",
+        "install": "pip install playwright pytest-playwright axe-playwright-python",
         "script_hint": (
             "#!/bin/bash\n"
-            "apt-get update -y && apt-get install -y ruby bundler 2>/dev/null\n"
-            "cd /workspace && bundle install\n"
-            "bundle exec rspec"
+            "pip install playwright pytest-playwright axe-playwright-python\n"
+            "playwright install --with-deps chromium\n"
+            "cd /workspace/{workspace_path} && pytest -v tests/test_accessibility_*"
         ),
     },
-    "C#": {
-        "framework": "xUnit or NUnit",
-        "file_pattern": "<Module>Tests.cs in <ProjectName>.Tests/",
+    "db_pytest": {
+        "concern": "Data integrity, migrations, stored procedures, query correctness",
+        "install": "pip install pytest sqlalchemy psycopg2-binary",
         "script_hint": (
             "#!/bin/bash\n"
-            "apt-get update -y && apt-get install -y dotnet-sdk-8.0 2>/dev/null\n"
-            "cd /workspace && dotnet test"
+            "pip install pytest sqlalchemy psycopg2-binary\n"
+            "cd /workspace/{workspace_path} && pytest -v tests/test_db_*"
         ),
     },
 }
 
+_LANGUAGE_RUNNER: dict[str, dict[str, str]] = {
+    "Python":     {"runner": "pytest",               "file_pattern": "tests/test_<concern>_*.py"},
+    "Java":       {"runner": "mvn test",             "file_pattern": "src/test/java/**/*Test.java"},
+    "JavaScript": {"runner": "npm test",             "file_pattern": "tests/*.test.js"},
+    "TypeScript": {"runner": "npm test",             "file_pattern": "tests/*.test.ts"},
+    "PHP":        {"runner": "./vendor/bin/phpunit", "file_pattern": "tests/*Test.php"},
+    "Ruby":       {"runner": "bundle exec rspec",    "file_pattern": "spec/**/*_spec.rb"},
+    "C#":         {"runner": "dotnet test",          "file_pattern": "**/*Tests.cs"},
+    "Go":         {"runner": "go test ./...",        "file_pattern": "*_test.go"},
+}
+
+def _build_tool_catalogue(verbose: bool) -> str:
+    """Short catalogue for LOW profile, full detail for STANDARD/HIGH."""
+    if verbose:
+        return "\n\n".join(
+            f"[{key}]\n"
+            f"  Concern   : {meta['concern']}\n"
+            f"  Install   : {meta['install']}\n"
+            f"  script.sh :\n"
+            + "\n".join(f"    {line}" for line in meta["script_hint"].splitlines())
+            for key, meta in _QA_TOOLS.items()
+        )
+    else:
+        return "\n".join(
+            f"  • [{key}] {meta['concern']}"
+            for key, meta in _QA_TOOLS.items()
+        )
 
 def testing_agent_node(state: GraphState) -> dict:
     """
-    TDD Approach: Generates a test suite and a script.sh execution script.
-    Multi-turn (max 10): MUST write files by turn 1 or 2.
-    Language-agnostic: detects language/framework and generates tests using
-    the appropriate test framework (pytest, JUnit, Jest, PHPUnit, Kotest, etc.)
-    and a matching script.sh with the correct install + test commands.
+    Senior QA Engineer: analyses the ticket and spec to select the right QA
+    tool(s) — Selenium, Playwright, Cypress, Appium, JMeter, Locust, OWASP ZAP,
+    axe, or plain API/DB tests — then generates the test suite and a matching
+    script.sh that sets up the environment inside a Docker container.
     """
-    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "workspace"))
-
-    # Creating the workspace directory
+    repo_url       = state.get("repo_url", "")
+    base_workspace = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "workspace")
+    )
+    workspace_dir = (
+        os.path.join(base_workspace, repo_url.split("/")[-1].replace(".git", ""))
+        if repo_url else base_workspace
+    )
     initiate_directory(workspace_dir)
 
-    # Clearing the workspace directory
-    clear_directory(workspace_dir)
-
-    llm = get_llm()
-    ticket_text = state.get("ticket_text", "")
-    spec = state.get("spec", "")
-    log_file_path = state.get("log_file_path", "")
+    llm                = get_llm()
+    ticket_text        = state.get("ticket_text", "")
+    spec               = state.get("spec", "")
+    log_file_path      = state.get("log_file_path", "")
     chat_log_file_path = state.get("chat_log_file_path", "")
-    total_tokens = state.get("total_tokens", 0)
+    total_tokens       = state.get("total_tokens", 0)
 
-    # ── Detect language ──────────────────────────────────────────────────────
-    detected_language = state.get("detected_language") or ""
+    # ── Read model profile from state (injected by orchestrator) ─────────────
+    profile      = state.get("model_profile", {})
+    MAX_TOOL_OUT = int(profile.get("max_tool_out",   2_000))
+    MAX_HISTORY  = int(profile.get("max_history",    6))
+    MAX_FILES    = int(profile.get("max_files",      30))
+    max_spec     = int(profile.get("max_spec",       1_500))
+    max_ticket   = int(profile.get("max_test_out",   800))   # reuse for ticket truncation
+    verbose      = profile.get("system_verbose", False)
+
+    # ── Language detection ───────────────────────────────────────────────────
+    detected_language  = state.get("detected_language") or ""
     detected_framework = state.get("detected_framework") or ""
     if not detected_language or detected_language == "Unknown":
-        lang_info = detect_language(workspace_dir)
-        detected_language = lang_info.get("language", "Unknown")
+        lang_info          = detect_language(workspace_dir)
+        detected_language  = lang_info.get("language", "Unknown")
         detected_framework = lang_info.get("framework", "Unknown")
 
-    # Look up test framework hints
-    hints = _TEST_FRAMEWORK_HINTS.get(detected_language, {})
-    test_framework = hints.get("framework", "the appropriate test framework for the detected language")
-    file_pattern = hints.get("file_pattern", "tests/ directory")
-    script_hint = hints.get(
-        "script_hint",
-        "#!/bin/bash\n# Install dependencies and run the test suite for the detected language"
-    )
+    lang_runner  = _LANGUAGE_RUNNER.get(detected_language, {})
+    file_pattern = lang_runner.get("file_pattern", "tests/test_*.py")
 
-    from src.tools.files import get_file_tools
-    file_tools = get_file_tools(workspace_dir)
+    file_tools     = get_file_tools(workspace_dir)
     llm_with_tools = llm.bind_tools(file_tools)
 
-    print(f"[ Testing Agent ] Generating TDD test suite for {detected_language}/{detected_framework}...")
+    print(f"[ Testing Agent ] Analysing ticket to select QA tools "
+          f"({detected_language}/{detected_framework})...")
 
+    # ── Workspace file listing — capped by profile ───────────────────────────
+    ignore_dirs = {
+        ".git", "__pycache__", "node_modules", ".venv",
+        "venv", "env", "target", "build", "dist", ".gradle",
+    }
+    
     workspace_files = []
-    ignore_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv", "env",
-                   "target", "build", "dist", ".gradle"}
     if os.path.exists(workspace_dir):
         for root, dirs, files in os.walk(workspace_dir):
             dirs[:] = [d for d in dirs if d not in ignore_dirs]
-            for file in files:
-                rel_path = os.path.relpath(os.path.join(root, file), workspace_dir)
-                workspace_files.append(rel_path)
+            for f in files:
+                workspace_files.append(
+                    os.path.relpath(os.path.join(root, f), workspace_dir)
+                )
+    if len(workspace_files) > MAX_FILES:
+        workspace_files = workspace_files[:MAX_FILES] + [
+            f"... ({len(workspace_files) - MAX_FILES} more not shown)"
+        ]
+    file_list_str  = "\n".join(f"- {f}" for f in workspace_files)
+    tool_catalogue = _build_tool_catalogue(verbose)
 
-    file_list_str = "\n".join([f"- {f}" for f in workspace_files])
-
-    max_turns = 10
-    gen_prompt = (
-        f"You are an expert test engineer. You have ONLY {max_turns} turns.\n\n"
-        f"DETECTED LANGUAGE: {detected_language}\n"
-        f"DETECTED FRAMEWORK: {detected_framework}\n"
-        f"TEST FRAMEWORK TO USE: {test_framework}\n\n"
-        "GOAL: Create a complete test suite AND a script.sh execution script.\n\n"
-        "INSTRUCTIONS:\n"
-        "1. Use the 'write_file' tool to create test files.\n"
-        f"   - Name test files following {detected_language} convention: {file_pattern}\n"
-        f"   - Use {test_framework} as the test framework.\n"
-        "   - Each source file / class should have its own test file.\n"
-        "   - Write meaningful tests that cover the spec requirements.\n\n"
-        "2. Create a 'script.sh' in the workspace root (NOT in tests/).\n"
-        "   - This script will be run inside a Ubuntu Docker container.\n"
-        "   - It must: install all required runtimes/dependencies, then run all tests.\n"
-        f"   - Reference template for {detected_language}:\n"
-        f"```\n{script_hint}\n```\n"
-        "   - Adapt as needed based on the actual workspace layout.\n\n"
-        "3. You can call multiple 'write_file' tools in a single turn.\n"
-        "   DO NOT waste turns on research if the spec is clear.\n\n"
-        f"Workspace root is the current directory. All file paths must be strictly relative to it.\n"
-        f"Existing files in workspace:\n{file_list_str}\n\n"
-        f"Issue ticket:\n{ticket_text}\n\n"
-        f"Technical Specification:\n{spec}\n"
+    # ── Serialise full _QA_TOOLS so the agent has install + script_hint ──────
+    qa_tools_detail = "\n\n".join(
+        f"[{key}]\n"
+        f"  Concern    : {meta['concern']}\n"
+        f"  Install    : {meta['install']}\n"
+        f"  script.sh  :\n"
+        + "\n".join(f"    {line}" for line in meta["script_hint"].splitlines())
+        for key, meta in _QA_TOOLS.items()
     )
 
+    # Insert this after the profile variables are defined
+    ticket_text_t = (
+        ticket_text if len(ticket_text) <= max_ticket 
+        else ticket_text[:max_ticket] + "\n...[ticket truncated]"
+    )
+    spec_t = (
+        spec if len(spec) <= max_spec 
+        else spec[:max_spec] + "\n...[spec truncated]"
+    )
+
+    if verbose:
+        gen_prompt = f"""You are a senior QA engineer.
+DETECTED LANGUAGE  : {detected_language}
+DETECTED FRAMEWORK : {detected_framework}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — SELECT THE RIGHT QA TOOL(S)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Read the ticket and spec carefully, then choose the most appropriate QA
+tool(s) from the catalogue below. You may combine tools when the ticket
+covers multiple concerns (e.g. a broken UI button → Selenium; an API
+that is slow → Locust).
+
+Available QA tools:
+{tool_catalogue}
+
+Full tool details (install commands + script.sh templates):
+{qa_tools_detail}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — GENERATE THE TEST FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Use 'read_file' to examine existing implementation code.
+2. Use 'write_file' to create test files.
+   • YOU MUST CALL THE 'write_file' TOOL! DO NOT write test scripts as plain text code blocks in your response.
+   • DO NOT write unit tests — focus exclusively on QA-level tests
+     (functional, E2E, performance, security, accessibility, etc.)
+   • Name files following {detected_language} conventions: {file_pattern}
+     Replace <concern> with the concern type (ui, api, load, mobile, etc.)
+   • Write tests that directly validate the behaviour described in the spec
+     and reproduce/prevent the issue described in the ticket.
+
+NEGATIVE RULES (CRITICAL):
+   • DO NOT modify source code or existing implementation files.
+   • DO NOT implement the fix described in the ticket. That is the Coding Agent's job.
+   • ONLY use 'write_file' for paths starting with 'tests/' or named 'script.sh'.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — CREATE script.sh
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Create a 'script.sh' at the workspace root (NOT inside tests/).
+  • The script runs inside a Docker container — install every dependency
+    needed for the chosen QA tool(s) before executing the tests.
+  • Base it on the script_hint(s) from the selected tool(s) above,
+    adapting paths and commands to match the actual workspace layout.
+
+You may call 'write_file' multiple times in a single turn.
+All file paths must be relative to the workspace root — never prepend
+'workspace/' or an absolute path.
+
+Existing files in workspace:
+{file_list_str}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ISSUE TICKET
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{ticket_text_t}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TECHNICAL SPECIFICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{spec_t}
+"""
+        system_content = (
+            f"You are a senior QA Engineer specialising in quality assurance. "
+            "Your job is to pick the right QA tool for the problem — not to default to any single tool. "
+            "Read the ticket, select the best tool(s), write ONLY test files, and produce script.sh. "
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "CRITICAL RULES:\n"
+            "1. You are NOT a software engineer or developer. DO NOT implement code fixes.\n"
+            "2. You MUST NOT modify source code or existing implementation files.\n"
+            "3. You ONLY use 'write_file' for paths starting with 'tests/' or 'script.sh'.\n"
+            "4. Your goal is to EXPOSE bugs and VALIDATE requirements, never to fix them.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Choices: Selenium (web UI), Playwright (modern E2E), Cypress (JS E2E), "
+            "Appium (mobile), JMeter/Locust (performance/load), requests+pytest (API), "
+            "OWASP ZAP (security), axe+Playwright (accessibility), SQLAlchemy+pytest (DB). "
+            "IMPORTANT: You MUST use the 'write_file' tool to generate files. NEVER output raw test scripts in plain text. "
+            "Read the ticket, write the tests, produce script.sh, and call tools. "
+            "Note: 'read_file' and 'write_file' both accept 'file_path' (preferred) or 'path' as the filename argument. "
+            "Context: All file paths must be relative to the workspace root."
+        )
+    else:
+        gen_prompt = (
+            f"Language: {detected_language} / {detected_framework}\n\n"
+            f"QA tools available:\n{tool_catalogue}\n\n"
+            f"Workspace files:\n{file_list_str}\n\n"
+            f"Test file pattern: {file_pattern}\n\n"
+            f"Ticket:\n{ticket_text_t}\n\n"
+            f"Spec:\n{spec_t}\n\n"
+            "Steps: read relevant files → pick QA tool(s) → write_file for tests/ and script.sh."
+        )
+        system_content = (
+            "You are a senior QA engineer.\n"
+            "Rules: pick the right QA tool, write test files only (tests/ or script.sh), "
+            "never modify source code, never fix bugs.\n"
+            "Use write_file — never output test scripts as plain text."
+        )
+
     messages = [
-        SystemMessage(content=(
-            f"You are a test-driven development expert specializing in {detected_language}. "
-            f"Write tests using {test_framework}. Use the 'write_file' tool immediately. "
-            "Do not hesitate. Create both the test files AND the script.sh runner. "
-            "The script.sh MUST install the runtime environment if needed (apt-get, pip, npm, mvn, etc.) "
-            "before running tests, as it executes inside a bare Ubuntu container.\n"
-            "CRITICAL: All file paths provided to tools MUST be relative to the workspace root. Do NOT prepend 'workspace/' or the absolute path."
-        )),
-        HumanMessage(content=gen_prompt)
+        SystemMessage(content=system_content),
+        HumanMessage(content=gen_prompt),
     ]
 
     current_request_tokens = 0
+    tools_called           = 0
+    MAX_TOOL_TURNS         = 20
+    tool_names_map         = {t.name: t for t in file_tools}
 
-    # Internal multi-turn loop (max turns)
-    for i in range(max_turns):
-        if chat_log_file_path:
-            log_chat_interaction(chat_log_file_path, f"Testing Agent (turn {i+1})", messages)
+    for turn in range(MAX_TOOL_TURNS):
+        if chat_log_file_path and turn == 0:
+            log_chat_interaction(
+                chat_log_file_path,
+                f"Testing Agent (Turn {turn + 1} Prompt)",
+                messages,
+            )
 
-        print(f"[ Testing Agent ] Internal Turn {i+1} — Invoking LLM...")
-        response = llm_with_tools.invoke(messages)
+        try:
+            response = llm_with_tools.invoke(messages)
+        except Exception as e:
+            print(f"[ Testing Agent ] API Error on turn {turn + 1}: {e}")
+            break
 
-        # Extract token usage
-        usage = response.usage_metadata or {}
+        usage    = response.usage_metadata or {}
         p_tokens = usage.get("input_tokens", 0)
         c_tokens = usage.get("output_tokens", 0)
-        current_request_tokens += (p_tokens + c_tokens)
+        current_request_tokens += p_tokens + c_tokens
 
         if log_file_path:
             model = getattr(llm, "model", getattr(llm, "model_name", "unknown-model"))
-            log_llm_interaction(log_file_path, f"Testing Agent (turn {i+1})", model, p_tokens, c_tokens)
+            log_llm_interaction(log_file_path, "Testing Agent", model, p_tokens, c_tokens)
+        if chat_log_file_path:
+            log_chat_interaction(
+                chat_log_file_path,
+                f"Testing Agent (Turn {turn + 1} Response)",
+                response,
+            )
 
         messages.append(response)
 
         if not response.tool_calls:
-            print("[ Testing Agent ] No more tool calls requested. Finishing turn.")
-            break
+            if current_request_tokens == 0 or turn == 0 or tools_called == 0:
+                print(f"[ Testing Agent ] Turn {turn + 1}: No tool calls — nudging LLM to use tools...")
+                if messages and messages[-1].type == "ai":
+                    messages.pop()
+                nudge_text = (
+                    "SYSTEM NUDGE: You must use the 'write_file' tool to create the test files and script.sh. "
+                    "Do NOT output test scripts as plain text code blocks in your response. Call the tool NOW."
+                )
+                if messages and messages[-1].type == "human":
+                    if "SYSTEM NUDGE:" not in getattr(messages[-1], "content", ""):
+                        messages[-1].content += f"\n\n{nudge_text}"
+                else:
+                    messages.append(HumanMessage(content=nudge_text))
+                continue
+            else:
+                print(f"[ Testing Agent ] Turn {turn + 1}: No more tool calls — finishing.")
+                break
 
-        print(f"[ Testing Agent ] Executing {len(response.tool_calls)} tool call(s)...")
+        tools_called += len(response.tool_calls)
+        print(f"[ Testing Agent ] Turn {turn + 1}: Executing {len(response.tool_calls)} tool call(s)...")
+
         for tool_call in response.tool_calls:
-            tool_name = tool_call['name']
-            tool_args = tool_call['args']
-            tool_id = tool_call['id']
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            tool_id   = tool_call["id"]
 
-            print(f"  -> Calling tool: {tool_name}")
-            result = "Tool not found."
-            for t in file_tools:
-                if t.name == tool_name:
-                    try:
-                        res = t.invoke(tool_args)
-                        result = str(res)
-                    except Exception as e:
-                        result = f"Error: {e}"
-                        print(f"     Tool error: {e}")
+            matched_tool = tool_names_map.get(tool_name)
+            if matched_tool is None:
+                result = f"Error: Tool '{tool_name}' not found. Available tools: {list(tool_names_map.keys())}"
+                print(f"  -> Tool '{tool_name}' NOT FOUND")
+            else:
+                print(f"  -> Calling tool: {tool_name}({', '.join(f'{k}={repr(v)[:60]}' for k, v in tool_args.items())})")
+                try:
+                    result = str(matched_tool.invoke(tool_args))
+                    preview = result[:200].replace('\n', '\\n')
+                    print(f"     Result: {preview}{'...' if len(result) > 200 else ''}")
+                    # ── Cap tool output by profile ───────────────────────
+                    if len(result) > MAX_TOOL_OUT:
+                        half   = MAX_TOOL_OUT // 2
+                        result = result[:half] + "\n...[OUTPUT TRUNCATED]...\n" + result[-half:]
+                except Exception as e:
+                    result = f"Error executing tool '{tool_name}': {e}"
+                    print(f"     Tool error: {e}")
 
             messages.append(ToolMessage(content=result, tool_call_id=tool_id))
 
+        # ── Context pruning — capped by profile ──────────────────────────
+        if len(messages) > 2 + MAX_HISTORY:
+            core   = messages[:2]
+            recent = messages[2:][-MAX_HISTORY:]
+            while recent and recent[0].type == "tool":
+                recent.pop(0)
+            messages = core + recent
+
+        if tests_passed:
+            print(f"[ Testing Agent ] Tests passed on turn {turn + 1}!")
+            break
+    else:
+        print(f"[ Testing Agent ] Reached max tool turns ({MAX_TOOL_TURNS}).")
+
     return {
-        "tests_generated": True,
-        "detected_language": detected_language,
+        "tests_generated":    True,
+        "detected_language":  detected_language,
         "detected_framework": detected_framework,
-        "total_tokens": total_tokens + current_request_tokens
+        "total_tokens":       total_tokens + current_request_tokens,
     }

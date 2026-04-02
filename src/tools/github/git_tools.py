@@ -5,17 +5,22 @@ import git
 from langchain_core.tools import tool
 
 
-def _workspace_path() -> str:
-    return os.path.abspath(
+def _workspace_path(repo_url: str = None) -> str:
+    base = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "..", "workspace")
     )
+    if repo_url:
+        repo_name = repo_url.split("/")[-1].replace(".git", "")
+        return os.path.join(base, repo_name)
+    return base
 
 
 @tool
 def clone_or_pull_repo(repo_url: str) -> str:
     """
     Clone the repository into ``workspace/`` if it does not exist yet,
-    or pull the latest changes from ``main`` if it does.
+    or reset it to exactly match the remote ``main`` branch if it does.
+    Any local changes (staged, unstaged, stashed, or untracked) are discarded.
 
     Uses the GITHUB_TOKEN for authenticated HTTPS access.
 
@@ -23,35 +28,53 @@ def clone_or_pull_repo(repo_url: str) -> str:
         repo_url: HTTPS clone URL (e.g. https://github.com/org/repo.git).
     """
     token = os.environ.get("GITHUB_TOKEN", "")
-    # Embed token into URL for authenticated clone
     auth_url = repo_url.replace("https://", f"https://{token}@")
 
-    workspace = _workspace_path()
+    workspace = _workspace_path(repo_url)
     try:
         if os.path.isdir(os.path.join(workspace, ".git")):
             repo = git.Repo(workspace)
-            repo.remotes.origin.pull("main")
-            print(f"Project pulled to absolute path: {workspace}")
-            return f"Pulled latest changes into {workspace}."
+
+            # Drop any stashed changes so nothing is hiding
+            try:
+                repo.git.stash("drop")
+            except git.GitCommandError:
+                pass  # No stash exists — that's fine
+
+            # Fetch all remote changes
+            repo.remotes.origin.fetch()
+
+            # Hard reset to match remote main exactly
+            repo.git.reset("--hard", "origin/main")
+
+            # Remove untracked files and directories
+            repo.git.clean("-fd")
+
+            print(f"Project reset to origin/main at: {workspace}")
+            return f"Reset {workspace} to match origin/main."
         else:
             git.Repo.clone_from(auth_url, workspace)
-            print(f"Project pulled to absolute path: {workspace}")
+            print(f"Project cloned to absolute path: {workspace}")
             return f"Cloned {repo_url} into {workspace}."
     except git.GitCommandError as exc:
         return f"Git error: {exc}"
 
 
 @tool
-def create_branch(branch_name: str) -> str:
+def create_branch(branch_name: str, repo_url: str = None) -> str:
     """
     Create and checkout a new local branch in the workspace repository.
 
     Args:
         branch_name: Branch name to create (e.g. ``fix/issue-42-add-guard``).
+        repo_url: Optional HTTPS clone URL to locate the correct directory.
     """
-    workspace = _workspace_path()
+    workspace = _workspace_path(repo_url)
     try:
         repo = git.Repo(workspace)
+        if any(h.name == branch_name for h in repo.heads):
+            repo.heads[branch_name].checkout()
+            return f"Checked out existing branch '{branch_name}'."
         new_branch = repo.create_head(branch_name)
         new_branch.checkout()
         return f"Checked out new branch '{branch_name}'."
@@ -60,7 +83,7 @@ def create_branch(branch_name: str) -> str:
 
 
 @tool
-def commit_and_push(commit_message: str, branch_name: str) -> str:
+def commit_and_push(commit_message: str, branch_name: str, repo_url: str = None) -> str:
     """
     Stage all changes in the workspace, commit them with the given message,
     and push the branch to the ``origin`` remote.
@@ -68,9 +91,10 @@ def commit_and_push(commit_message: str, branch_name: str) -> str:
     Args:
         commit_message: Commit message (should reference the issue number).
         branch_name:    Remote branch to push to.
+        repo_url:       Optional HTTPS clone URL to locate the correct directory.
     """
     token = os.environ.get("GITHUB_TOKEN", "")
-    workspace = _workspace_path()
+    workspace = _workspace_path(repo_url)
     try:
         repo = git.Repo(workspace)
         repo.git.add(A=True)

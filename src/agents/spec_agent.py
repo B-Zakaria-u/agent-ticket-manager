@@ -14,16 +14,20 @@ def spec_agent_node(state: GraphState) -> dict:
     """
     llm = get_llm()
     ticket_text = state.get("ticket_text", "")
-    feedback = state.get("spec_feedback", "")
-    iteration_count = state.get("spec_iteration_count", 0)
     log_file_path = state.get("log_file_path", "")
     chat_log_file_path = state.get("chat_log_file_path", "")
     total_tokens = state.get("total_tokens", 0)
 
     # ── Detect language from workspace ───────────────────────────────────────
-    workspace_dir = os.path.abspath(
+    repo_url = state.get("repo_url", "")
+    base_workspace = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "workspace")
     )
+    if repo_url:
+        repo_name = repo_url.split("/")[-1].replace(".git", "")
+        workspace_dir = os.path.join(base_workspace, repo_name)
+    else:
+        workspace_dir = base_workspace
     lang_info = detect_language(workspace_dir)
     detected_language = lang_info.get("language", "Unknown")
     detected_framework = lang_info.get("framework", "Unknown")
@@ -39,8 +43,6 @@ def spec_agent_node(state: GraphState) -> dict:
         f"Please write a robust technical specification for this ticket:\n\n{ticket_text}\n"
         f"{lang_hint}"
     )
-    if feedback and feedback != "VALID":
-        prompt += f"\nPrevious specification was rejected with this feedback. Please fix the spec:\n{feedback}"
 
     messages = [
         SystemMessage(content=(
@@ -78,7 +80,6 @@ def spec_agent_node(state: GraphState) -> dict:
     print("[ Spec Agent ] Specification generated successfully.")
     return {
         "spec": str(raw),
-        "spec_iteration_count": iteration_count + 1,
         "detected_language": detected_language,
         "detected_framework": detected_framework,
         "total_tokens": total_tokens + p_tokens + c_tokens

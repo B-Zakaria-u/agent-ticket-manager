@@ -22,3 +22,5 @@ class RunResponse(BaseModel):
     tests_passed: bool = Field(description="Whether all tests passed.")
     pr_url: str = Field(description="URL of the opened GitHub Pull Request.")
     iteration_count: int = Field(description="Total coding iteration cycles executed.")
+    intent: str = Field(description="Detected intent of the user request.")
+    answer: str = Field(description="Direct answer if the intent was a QUESTION.")

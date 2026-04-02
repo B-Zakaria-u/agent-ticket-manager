@@ -3,6 +3,7 @@
 All route and app configuration lives in src/api/. This file is intentionally
 minimal: it only bootstraps the environment and hands off to the app factory.
 """
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,4 +14,5 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    adress = os.getenv("IP_ADDRESS")
+    uvicorn.run("main:app", host=adress, reload=True)

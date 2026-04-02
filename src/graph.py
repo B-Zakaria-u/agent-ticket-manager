@@ -1,44 +1,43 @@
-"""LangGraph StateGraph — wires all agent nodes into the full pipeline.
-
-Graph shape
------------
-
-    Issue Scout ──► Spec Agent ──► Validator Agent ──► Coding Agent ──► Testing Agent ──► PR Agent ──► END
-                         ▲                │                                    ▲               │
-                         └── (invalid) ───┘                                    └─── (fail<3) ──┘
-                                                                                               │
-                                                                                            (fail≥3)
-                                                                                               ▼
-                                                                                             END
-"""
 from langgraph.graph import StateGraph, END
 
 from src.state import GraphState
+from src.agents.orchestrator_agent import orchestrator_agent_node
 from src.agents.issue_scout.agent import issue_scout_node
 from src.agents.spec_agent import spec_agent_node
-from src.agents.validator_agent import validator_agent_node
-from src.agents.coding_agent import coding_agent_node
 from src.agents.testing_agent import testing_agent_node
-from src.agents.execution_agent import execution_agent_node
-from src.agents.pr_agent import pr_agent_node
+from src.agents.coding_agent import coding_agent_node
+from src.agents.pr.agent import pr_agent_node
 
 
-def _route_issue_scout(state: GraphState) -> str:
-    if not state.get("issue_number"):
-        return END
-    return "Spec Agent"
+def router_node(state: GraphState) -> dict:
+    """
+    Determines the next agent from the dynamic pipeline.
+    """
+    pipeline = state.get("pipeline", [])
+    step = state.get("pipeline_step", 0)
+
+    if not pipeline or step >= len(pipeline):
+        print("[ Router ] Pipeline empty or complete. Transitioning to END.")
+        return {"next_agent": END}
+
+    next_agent = pipeline[step]
+    print(f"[ Router ] Next agent in pipeline: {next_agent} (step {step + 1}/{len(pipeline)})")
+    
+    return {
+        "next_agent": next_agent,
+        "pipeline_step": step + 1
+    }
 
 
-def _route_validator(state: GraphState) -> str:
-    return "Testing Agent" if state.get("spec_feedback") == "VALID" else "Spec Agent"
+def _route_dynamic(state: GraphState) -> str:
+    """Route to the next agent specified by the router node."""
+    return state.get("next_agent", END)
 
 
-def _route_execution(state: GraphState) -> str:
-    if state.get("tests_passed", False):
-        return "PR Agent"
-    if state.get("iteration_count", 0) < 3:
-        return "Coding Agent"
-    return END
+def _route_coding(state: GraphState) -> str:
+    if state.get("tests_passed", False) or state.get("iteration_count", 0) >= 3:
+        return "Router"
+    return "Coding Agent"
 
 
 def build_graph():
@@ -46,48 +45,28 @@ def build_graph():
     workflow = StateGraph(GraphState)
 
     # ── Nodes ────────────────────────────────────────────────────────────────
+    workflow.add_node("Orchestrator Agent", orchestrator_agent_node)
     workflow.add_node("Issue Scout",    issue_scout_node)
     workflow.add_node("Spec Agent",     spec_agent_node)
-    workflow.add_node("Validator Agent", validator_agent_node)
     workflow.add_node("Testing Agent",  testing_agent_node)
     workflow.add_node("Coding Agent",   coding_agent_node)
-    workflow.add_node("Execution Agent", execution_agent_node)
     workflow.add_node("PR Agent",       pr_agent_node)
+    workflow.add_node("Router",          router_node)
 
     # ── Entry point ───────────────────────────────────────────────────────────
-    workflow.set_entry_point("Issue Scout")
+    workflow.set_entry_point("Orchestrator Agent")
 
     # ── Edges ─────────────────────────────────────────────────────────────────
-    workflow.add_conditional_edges("Issue Scout", _route_issue_scout)
-    workflow.add_edge("Spec Agent",     "Validator Agent")
-    workflow.add_conditional_edges("Validator Agent", _route_validator)
-    workflow.add_edge("Testing Agent",  "Coding Agent")
-    workflow.add_edge("Coding Agent",   "Execution Agent")
-    workflow.add_conditional_edges("Execution Agent", _route_execution)
-    workflow.add_edge("PR Agent",       END)
-
-    return workflow.compile()
-
-
-def build_graph_manual(ticket_text: str):
-    """
-    Build the same graph but skip the Issue Scout and inject ticket_text
-    directly — used by the manual ``POST /run`` endpoint.
-    """
-    workflow = StateGraph(GraphState)
-    workflow.add_node("Spec Agent",     spec_agent_node)
-    workflow.add_node("Validator Agent", validator_agent_node)
-    workflow.add_node("Testing Agent",  testing_agent_node)
-    workflow.add_node("Coding Agent",   coding_agent_node)
-    workflow.add_node("Execution Agent", execution_agent_node)
-    workflow.add_node("PR Agent",       pr_agent_node)
-
-    workflow.set_entry_point("Spec Agent")
-    workflow.add_edge("Spec Agent",     "Validator Agent")
-    workflow.add_conditional_edges("Validator Agent", _route_validator)
-    workflow.add_edge("Testing Agent",  "Coding Agent")
-    workflow.add_edge("Coding Agent",   "Execution Agent")
-    workflow.add_conditional_edges("Execution Agent", _route_execution)
-    workflow.add_edge("PR Agent",       END)
+    workflow.add_edge("Orchestrator Agent", "Router")
+    
+    # After each agent, go back to Router to get the next one
+    workflow.add_edge("Issue Scout", "Router")
+    workflow.add_edge("Spec Agent", "Router")
+    workflow.add_edge("Testing Agent", "Router")
+    workflow.add_conditional_edges("Coding Agent", _route_coding)
+    workflow.add_edge("PR Agent", "Router")
+    
+    # Router decides the next step
+    workflow.add_conditional_edges("Router", _route_dynamic)
 
     return workflow.compile()

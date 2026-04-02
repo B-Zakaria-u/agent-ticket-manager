@@ -110,7 +110,12 @@ class IssueScoutAgent(BaseAgentNode):
 
         # ── Step 6: create fix branch ────────────────────────────────────────
         print(f"[ Issue Scout ] Creating local fix branch: {branch_name} ...")
-        create_branch.invoke({"branch_name": branch_name})
+
+        try:
+            create_branch.invoke({"branch_name": branch_name, "repo_url": repo_url})
+        except Exception as e:
+            # If it fails even with idempotency (e.g. repo name mismatch), we log and raise
+            raise e
 
         return {
             "ticket_text": ticket_text,

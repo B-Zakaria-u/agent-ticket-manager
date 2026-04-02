@@ -21,6 +21,7 @@ class PRAgent(BaseAgentNode):
         ticket_text = state.get("ticket_text", "")
         issue_number = state.get("issue_number", 0)
         branch_name = state.get("branch_name", "fix/automated")
+        repo_url = state.get("repo_url", "")
         log_file_path = state.get("log_file_path", "")
         chat_log_file_path = state.get("chat_log_file_path", "")
         total_tokens = state.get("total_tokens", 0)
@@ -75,6 +76,7 @@ class PRAgent(BaseAgentNode):
         push_result = commit_and_push.invoke({
             "commit_message": commit_msg,
             "branch_name": branch_name,
+            "repo_url": repo_url,
         })
 
         # ── Open the PR ───────────────────────────────────────────────────────

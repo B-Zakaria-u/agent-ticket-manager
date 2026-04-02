@@ -7,6 +7,8 @@ def get_llm():
     """
     return ChatOpenAI(
         openai_api_base="http://127.0.0.1:8080/v1",
+        max_retries=1,
+        timeout=1200.00,
         openai_api_key="not-needed", # Local API does not require real key
         streaming=True,
         temperature=0.1
