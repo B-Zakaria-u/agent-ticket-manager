@@ -9,6 +9,20 @@ def get_llm():
     """
     provider = os.getenv("LLM_PROVIDER", "google").lower()
 
+    if provider == "openrouter":
+        try:
+            from langchain_openrouter import ChatOpenRouter
+            return ChatOpenRouter(
+                api_key=os.getenv("OPEN_ROUTER_KEY"),
+                model=os.getenv("OPEN_ROUTER_MODEL", "qwen/qwen3-coder:free"),
+                temperature=0.2
+            )
+        except ImportError:
+            raise ImportError(
+                "Could not import langchain_openrouter. Please install it with: "
+                "pip install langchain-openrouter"
+            )
+
     if provider == "groq":
         try:
             from langchain_groq import ChatGroq

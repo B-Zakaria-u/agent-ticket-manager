@@ -7,7 +7,6 @@ from src.tools.folders import initiate_directory
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from src.tools.files import get_file_tools
 
-
 # ── QA tool catalogue ──────────────────────────────────────────────────────────
 _QA_TOOLS: dict[str, dict[str, str]] = {
     "selenium": {
@@ -123,7 +122,7 @@ _LANGUAGE_RUNNER: dict[str, dict[str, str]] = {
     "Java":       {"runner": "mvn test",             "file_pattern": "src/test/java/**/*Test.java"},
     "JavaScript": {"runner": "npm test",             "file_pattern": "tests/*.test.js"},
     "TypeScript": {"runner": "npm test",             "file_pattern": "tests/*.test.ts"},
-    "PHP":        {"runner": "./vendor/bin/phpunit", "file_pattern": "tests/*Test.php"},
+    "PHP":         {"runner": "./vendor/bin/phpunit", "file_pattern": "tests/*Test.php"},
     "Ruby":       {"runner": "bundle exec rspec",    "file_pattern": "spec/**/*_spec.rb"},
     "C#":         {"runner": "dotnet test",          "file_pattern": "**/*Tests.cs"},
     "Go":         {"runner": "go test ./...",        "file_pattern": "*_test.go"},
@@ -149,10 +148,10 @@ def _build_tool_catalogue(verbose: bool) -> str:
 def testing_agent_node(state: GraphState) -> dict:
     """
     Senior QA Engineer: analyses the ticket and spec to select the right QA
-    tool(s) — Selenium, Playwright, Cypress, Appium, JMeter, Locust, OWASP ZAP,
-    axe, or plain API/DB tests — then generates the test suite and a matching
-    script.sh that sets up the environment inside a Docker container.
+    tool(s) — then generates the test suite and a matching script.sh.
+    Iterates through tool calls until files are written or max turns reached.
     """
+    # ── Configuration & State ────────────────────────────────────────────────
     repo_url       = state.get("repo_url", "")
     base_workspace = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "workspace")
@@ -170,13 +169,13 @@ def testing_agent_node(state: GraphState) -> dict:
     chat_log_file_path = state.get("chat_log_file_path", "")
     total_tokens       = state.get("total_tokens", 0)
 
-    # ── Read model profile from state (injected by orchestrator) ─────────────
+    # ── Read model profile from state ────────────────────────────────────────
     profile      = state.get("model_profile", {})
     MAX_TOOL_OUT = int(profile.get("max_tool_out",   2_000))
     MAX_HISTORY  = int(profile.get("max_history",    6))
     MAX_FILES    = int(profile.get("max_files",      30))
     max_spec     = int(profile.get("max_spec",       1_500))
-    max_ticket   = int(profile.get("max_test_out",   800))   # reuse for ticket truncation
+    max_ticket   = int(profile.get("max_test_out",   800)) 
     verbose      = profile.get("system_verbose", False)
 
     # ── Language detection ───────────────────────────────────────────────────
@@ -191,17 +190,11 @@ def testing_agent_node(state: GraphState) -> dict:
     file_pattern = lang_runner.get("file_pattern", "tests/test_*.py")
 
     file_tools     = get_file_tools(workspace_dir)
+    tool_names_map = {t.name: t for t in file_tools}
     llm_with_tools = llm.bind_tools(file_tools)
 
-    print(f"[ Testing Agent ] Analysing ticket to select QA tools "
-          f"({detected_language}/{detected_framework})...")
-
     # ── Workspace file listing — capped by profile ───────────────────────────
-    ignore_dirs = {
-        ".git", "__pycache__", "node_modules", ".venv",
-        "venv", "env", "target", "build", "dist", ".gradle",
-    }
-    
+    ignore_dirs = {".git", "__pycache__", "node_modules", ".venv"}
     workspace_files = []
     if os.path.exists(workspace_dir):
         for root, dirs, files in os.walk(workspace_dir):
@@ -210,24 +203,20 @@ def testing_agent_node(state: GraphState) -> dict:
                 workspace_files.append(
                     os.path.relpath(os.path.join(root, f), workspace_dir)
                 )
+    
+    file_list_str = "\n".join(f"- {f}" for f in workspace_files[:MAX_FILES])
     if len(workspace_files) > MAX_FILES:
-        workspace_files = workspace_files[:MAX_FILES] + [
-            f"... ({len(workspace_files) - MAX_FILES} more not shown)"
-        ]
-    file_list_str  = "\n".join(f"- {f}" for f in workspace_files)
+        file_list_str += f"\n... ({len(workspace_files) - MAX_FILES} more not shown)"
+
     tool_catalogue = _build_tool_catalogue(verbose)
 
-    # ── Serialise full _QA_TOOLS so the agent has install + script_hint ──────
+    # Full tool details (for script_hint generation)
     qa_tools_detail = "\n\n".join(
-        f"[{key}]\n"
-        f"  Concern    : {meta['concern']}\n"
-        f"  Install    : {meta['install']}\n"
-        f"  script.sh  :\n"
+        f"[{key}]\n Concern: {meta['concern']}\n Install: {meta['install']}\n script.sh :\n"
         + "\n".join(f"    {line}" for line in meta["script_hint"].splitlines())
         for key, meta in _QA_TOOLS.items()
     )
 
-    # Insert this after the profile variables are defined
     ticket_text_t = (
         ticket_text if len(ticket_text) <= max_ticket 
         else ticket_text[:max_ticket] + "\n...[ticket truncated]"
@@ -237,209 +226,122 @@ def testing_agent_node(state: GraphState) -> dict:
         else spec[:max_spec] + "\n...[spec truncated]"
     )
 
+    # ── Prompts ──────────────────────────────────────────────────────────────
     if verbose:
         gen_prompt = f"""You are a senior QA engineer.
 DETECTED LANGUAGE  : {detected_language}
 DETECTED FRAMEWORK : {detected_framework}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 1 — SELECT THE RIGHT QA TOOL(S)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Read the ticket and spec carefully, then choose the most appropriate QA
-tool(s) from the catalogue below. You may combine tools when the ticket
-covers multiple concerns (e.g. a broken UI button → Selenium; an API
-that is slow → Locust).
-
 Available QA tools:
 {tool_catalogue}
 
-Full tool details (install commands + script.sh templates):
+Full tool details:
 {qa_tools_detail}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 2 — GENERATE THE TEST FILES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Use 'read_file' to examine existing implementation code.
-2. Use 'write_file' to create test files.
-   • YOU MUST CALL THE 'write_file' TOOL! DO NOT write test scripts as plain text code blocks in your response.
-   • DO NOT write unit tests — focus exclusively on QA-level tests
-     (functional, E2E, performance, security, accessibility, etc.)
-   • Name files following {detected_language} conventions: {file_pattern}
-     Replace <concern> with the concern type (ui, api, load, mobile, etc.)
-   • Write tests that directly validate the behaviour described in the spec
-     and reproduce/prevent the issue described in the ticket.
-
-NEGATIVE RULES (CRITICAL):
-   • DO NOT modify source code or existing implementation files.
-   • DO NOT implement the fix described in the ticket. That is the Coding Agent's job.
-   • ONLY use 'write_file' for paths starting with 'tests/' or named 'script.sh'.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 3 — CREATE script.sh
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Create a 'script.sh' at the workspace root (NOT inside tests/).
-  • The script runs inside a Docker container — install every dependency
-    needed for the chosen QA tool(s) before executing the tests.
-  • Base it on the script_hint(s) from the selected tool(s) above,
-    adapting paths and commands to match the actual workspace layout.
-
-You may call 'write_file' multiple times in a single turn.
-All file paths must be relative to the workspace root — never prepend
-'workspace/' or an absolute path.
 
 Existing files in workspace:
 {file_list_str}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ISSUE TICKET
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ISSUE TICKET:
 {ticket_text_t}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TECHNICAL SPECIFICATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TECHNICAL SPECIFICATION:
 {spec_t}
+
+WORKFLOW:
+1. Read implementation with 'read_file'.
+2. Write test files and script.sh with 'write_file'.
 """
         system_content = (
-            f"You are a senior QA Engineer specialising in quality assurance. "
-            "Your job is to pick the right QA tool for the problem — not to default to any single tool. "
-            "Read the ticket, select the best tool(s), write ONLY test files, and produce script.sh. "
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "You are a senior QA Engineer. Pick the right tool(s), write test files only, and produce script.sh.\n"
             "CRITICAL RULES:\n"
-            "1. You are NOT a software engineer or developer. DO NOT implement code fixes.\n"
-            "2. You MUST NOT modify source code or existing implementation files.\n"
-            "3. You ONLY use 'write_file' for paths starting with 'tests/' or 'script.sh'.\n"
-            "4. Your goal is to EXPOSE bugs and VALIDATE requirements, never to fix them.\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Choices: Selenium (web UI), Playwright (modern E2E), Cypress (JS E2E), "
-            "Appium (mobile), JMeter/Locust (performance/load), requests+pytest (API), "
-            "OWASP ZAP (security), axe+Playwright (accessibility), SQLAlchemy+pytest (DB). "
-            "IMPORTANT: You MUST use the 'write_file' tool to generate files. NEVER output raw test scripts in plain text. "
-            "Read the ticket, write the tests, produce script.sh, and call tools. "
-            "Note: 'read_file' and 'write_file' both accept 'file_path' (preferred) or 'path' as the filename argument. "
-            "Context: All file paths must be relative to the workspace root."
+            "1. DO NOT implement code fixes. DO NOT modify source code.\n"
+            "2. ONLY use 'write_file' for paths starting with 'tests/' or 'script.sh'.\n"
+            "3. You MUST use 'write_file'. Relative paths only."
         )
     else:
         gen_prompt = (
-            f"Language: {detected_language} / {detected_framework}\n\n"
-            f"QA tools available:\n{tool_catalogue}\n\n"
-            f"Workspace files:\n{file_list_str}\n\n"
-            f"Test file pattern: {file_pattern}\n\n"
-            f"Ticket:\n{ticket_text_t}\n\n"
-            f"Spec:\n{spec_t}\n\n"
-            "Steps: read relevant files → pick QA tool(s) → write_file for tests/ and script.sh."
+            f"Language: {detected_language}\n"
+            f"QA tools: {tool_catalogue}\n"
+            f"Files:\n{file_list_str}\n"
+            f"Ticket: {ticket_text_t}\n"
+            f"Spec: {spec_t}\n"
         )
-        system_content = (
-            "You are a senior QA engineer.\n"
-            "Rules: pick the right QA tool, write test files only (tests/ or script.sh), "
-            "never modify source code, never fix bugs.\n"
-            "Use write_file — never output test scripts as plain text."
-        )
+        system_content = "Senior QA: pick tool, write tests/ or script.sh via write_file. No source code changes."
 
     messages = [
         SystemMessage(content=system_content),
         HumanMessage(content=gen_prompt),
     ]
 
+    # ── Iterative Loop ───────────────────────────────────────────────────────
     current_request_tokens = 0
     tools_called           = 0
     MAX_TOOL_TURNS         = 20
-    tool_names_map         = {t.name: t for t in file_tools}
+    files_written          = False
+
+    print(f"[ Testing Agent ] Analysing ticket for {detected_language}...")
 
     for turn in range(MAX_TOOL_TURNS):
         if chat_log_file_path and turn == 0:
-            log_chat_interaction(
-                chat_log_file_path,
-                f"Testing Agent (Turn {turn + 1} Prompt)",
-                messages,
-            )
+            log_chat_interaction(chat_log_file_path, f"Testing Agent (Turn {turn + 1} Prompt)", messages)
 
         try:
             response = llm_with_tools.invoke(messages)
         except Exception as e:
-            print(f"[ Testing Agent ] API Error on turn {turn + 1}: {e}")
+            print(f"[ Testing Agent ] API Error: {e}")
             break
 
-        usage    = response.usage_metadata or {}
-        p_tokens = usage.get("input_tokens", 0)
-        c_tokens = usage.get("output_tokens", 0)
-        current_request_tokens += p_tokens + c_tokens
+        usage = getattr(response, "usage_metadata", {}) or {}
+        p_tokens, c_tokens = usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+        current_request_tokens += (p_tokens + c_tokens)
 
         if log_file_path:
-            model = getattr(llm, "model", getattr(llm, "model_name", "unknown-model"))
-            log_llm_interaction(log_file_path, "Testing Agent", model, p_tokens, c_tokens)
+            log_llm_interaction(log_file_path, "Testing Agent", getattr(llm, "model", "unknown"), p_tokens, c_tokens)
         if chat_log_file_path:
-            log_chat_interaction(
-                chat_log_file_path,
-                f"Testing Agent (Turn {turn + 1} Response)",
-                response,
-            )
+            log_chat_interaction(chat_log_file_path, f"Testing Agent (Turn {turn + 1} Response)", response)
 
         messages.append(response)
 
+        # ── Tool calling logic & Nudges ──────────────────────────────────────
         if not response.tool_calls:
-            if current_request_tokens == 0 or turn == 0 or tools_called == 0:
-                print(f"[ Testing Agent ] Turn {turn + 1}: No tool calls — nudging LLM to use tools...")
-                if messages and messages[-1].type == "ai":
-                    messages.pop()
-                nudge_text = (
-                    "SYSTEM NUDGE: You must use the 'write_file' tool to create the test files and script.sh. "
-                    "Do NOT output test scripts as plain text code blocks in your response. Call the tool NOW."
-                )
-                if messages and messages[-1].type == "human":
-                    if "SYSTEM NUDGE:" not in getattr(messages[-1], "content", ""):
-                        messages[-1].content += f"\n\n{nudge_text}"
-                else:
-                    messages.append(HumanMessage(content=nudge_text))
+            if not files_written:
+                nudge = "SYSTEM NUDGE: Use 'write_file' to create tests/ files and script.sh. Call the tool NOW."
+                messages.append(HumanMessage(content=nudge))
                 continue
             else:
-                print(f"[ Testing Agent ] Turn {turn + 1}: No more tool calls — finishing.")
+                print(f"[ Testing Agent ] Finished.")
                 break
 
-        tools_called += len(response.tool_calls)
         print(f"[ Testing Agent ] Turn {turn + 1}: Executing {len(response.tool_calls)} tool call(s)...")
-
         for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            tool_id   = tool_call["id"]
+            t_name, t_args, t_id = tool_call["name"], tool_call["args"], tool_call["id"]
+            
+            if t_name == "write_file":
+                files_written = True
 
-            matched_tool = tool_names_map.get(tool_name)
-            if matched_tool is None:
-                result = f"Error: Tool '{tool_name}' not found. Available tools: {list(tool_names_map.keys())}"
-                print(f"  -> Tool '{tool_name}' NOT FOUND")
-            else:
-                print(f"  -> Calling tool: {tool_name}({', '.join(f'{k}={repr(v)[:60]}' for k, v in tool_args.items())})")
+            matched_tool = tool_names_map.get(t_name)
+            if matched_tool:
                 try:
-                    result = str(matched_tool.invoke(tool_args))
-                    preview = result[:200].replace('\n', '\\n')
-                    print(f"     Result: {preview}{'...' if len(result) > 200 else ''}")
-                    # ── Cap tool output by profile ───────────────────────
+                    result = str(matched_tool.invoke(t_args))
                     if len(result) > MAX_TOOL_OUT:
-                        half   = MAX_TOOL_OUT // 2
-                        result = result[:half] + "\n...[OUTPUT TRUNCATED]...\n" + result[-half:]
+                        result = result[:MAX_TOOL_OUT//2] + "\n...[TRUNCATED]...\n" + result[-MAX_TOOL_OUT//2:]
                 except Exception as e:
-                    result = f"Error executing tool '{tool_name}': {e}"
-                    print(f"     Tool error: {e}")
+                    result = f"Error executing tool '{t_name}': {e}"
+            else:
+                result = f"Error: Tool '{t_name}' not found."
+            
+            messages.append(ToolMessage(content=result, tool_call_id=t_id))
 
-            messages.append(ToolMessage(content=result, tool_call_id=tool_id))
-
-        # ── Context pruning — capped by profile ──────────────────────────
+        # ── Context pruning ──────────────────────────────────────────────────
         if len(messages) > 2 + MAX_HISTORY:
-            core   = messages[:2]
+            core = messages[:2]
             recent = messages[2:][-MAX_HISTORY:]
             while recent and recent[0].type == "tool":
                 recent.pop(0)
             messages = core + recent
 
-        if tests_passed:
-            print(f"[ Testing Agent ] Tests passed on turn {turn + 1}!")
-            break
-    else:
-        print(f"[ Testing Agent ] Reached max tool turns ({MAX_TOOL_TURNS}).")
-
     return {
-        "tests_generated":    True,
+        "tests_generated":   files_written,
         "detected_language":  detected_language,
         "detected_framework": detected_framework,
         "total_tokens":       total_tokens + current_request_tokens,

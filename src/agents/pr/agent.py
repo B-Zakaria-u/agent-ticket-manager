@@ -77,7 +77,15 @@ class PRAgent(BaseAgentNode):
             "commit_message": commit_msg,
             "branch_name": branch_name,
             "repo_url": repo_url,
+            "force": True,  # Overwrite remote branch for this specific fix
         })
+
+        if "FAILURE" in push_result:
+            print(f"[ PR Agent ] Push failed: {push_result}")
+            return {
+                "pr_url": f"Push failed: {push_result}",
+                "total_tokens": total_tokens + p_tokens + c_tokens
+            }
 
         # ── Open the PR ───────────────────────────────────────────────────────
         pr_title = f"fix: {ticket_text.splitlines()[0][:72]}"
@@ -98,6 +106,10 @@ class PRAgent(BaseAgentNode):
                 if clean_url.startswith("http"):
                     pr_url = clean_url
                     break
+        
+        if not pr_url:
+            # If no URL, return the error message from tools
+            pr_url = pr_result
 
         return {
             "pr_url": pr_url,

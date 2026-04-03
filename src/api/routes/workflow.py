@@ -51,14 +51,14 @@ def _extract_final(outputs: list[dict]) -> RunResponse:
             final.update(v)
     print("[pipeline] Run finished.")
     return RunResponse(
-        spec=final.get("spec", ""),
-        spec_feedback=final.get("spec_feedback", ""),
-        test_output=final.get("test_output", ""),
-        tests_passed=final.get("tests_passed", False),
-        pr_url=final.get("pr_url", ""),
-        iteration_count=final.get("iteration_count", 0),
-        intent=final.get("intent", "STANDARD_FLOW"),
-        answer=final.get("answer", ""),
+        spec=final.get("spec") or "",
+        spec_feedback=final.get("spec_feedback") or "",
+        test_output=final.get("test_output") or "",
+        tests_passed=bool(final.get("tests_passed")),
+        pr_url=final.get("pr_url") or "",
+        iteration_count=final.get("iteration_count") or 0,
+        intent=final.get("intent") or "STANDARD_FLOW",
+        answer=final.get("answer") or "",
     )
 
 

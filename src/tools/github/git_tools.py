@@ -83,7 +83,12 @@ def create_branch(branch_name: str, repo_url: str = None) -> str:
 
 
 @tool
-def commit_and_push(commit_message: str, branch_name: str, repo_url: str = None) -> str:
+def commit_and_push(
+    commit_message: str,
+    branch_name: str,
+    repo_url: str = None,
+    force: bool = False,
+) -> str:
     """
     Stage all changes in the workspace, commit them with the given message,
     and push the branch to the ``origin`` remote.
@@ -92,6 +97,7 @@ def commit_and_push(commit_message: str, branch_name: str, repo_url: str = None)
         commit_message: Commit message (should reference the issue number).
         branch_name:    Remote branch to push to.
         repo_url:       Optional HTTPS clone URL to locate the correct directory.
+        force:          If True, use '--force' to overwrite remote branch.
     """
     token = os.environ.get("GITHUB_TOKEN", "")
     workspace = _workspace_path(repo_url)
@@ -107,11 +113,26 @@ def commit_and_push(commit_message: str, branch_name: str, repo_url: str = None)
         # Set authenticated remote URL before pushing
         origin = repo.remotes.origin
         repo_name = os.environ.get("GITHUB_REPOSITORY", "")
+        if not repo_name:
+            # Fallback to extracting from origin URL if env is missing
+            url = origin.url
+            match = re.search(r"github\.com[:/](.+?)(?:\.git)?$", url)
+            if match:
+                repo_name = match.group(1)
+
         origin.set_url(f"https://{token}@github.com/{repo_name}.git")
-        origin.push(refspec=f"{branch_name}:{branch_name}")
-        return f"Committed and pushed branch '{branch_name}' to origin."
+        
+        push_args = [f"{branch_name}:{branch_name}"]
+        if force:
+            push_args.insert(0, "--force")
+            
+        print(f"[ Git ] Pushing {branch_name} to origin (force={force})...")
+        origin.push(refspec=push_args)
+        return f"SUCCESS: Committed and pushed branch '{branch_name}' to origin."
     except git.GitCommandError as exc:
-        return f"Git error on commit/push: {exc}"
+        return f"FAILURE: Git error on commit/push: {exc}"
+    except Exception as exc:
+        return f"FAILURE: Unexpected error during commit/push: {exc}"
 
 
 def get_git_tools() -> list:

@@ -2,6 +2,7 @@ langchain
 langchain-google-genai
 langchain-community
 langchain-groq
+langchain-openrouter
 langgraph
 docker
 python-dotenv

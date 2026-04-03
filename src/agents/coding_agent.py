@@ -239,7 +239,8 @@ def coding_agent_node(state: GraphState) -> dict:
         })
 
     all_tools             = file_tools + search_tools + [run_tests]
-    llm_with_tools_forced = llm.bind_tools(all_tools, tool_choice="any")
+    #     llm_with_tools_forced = llm.bind_tools(all_tools, tool_choice="any")
+    llm_with_tools_forced = llm.bind_tools(all_tools, tool_choice="auto")
     llm_with_tools        = llm.bind_tools(all_tools)
 
     # ── Workspace file listing — capped by profile ───────────────────────────
@@ -274,7 +275,7 @@ def coding_agent_node(state: GraphState) -> dict:
     if verbose:
         system_content = (
             "You are a senior Software Engineer practising strict TDD.\n"
-            "Your deliverable is: working implementation code + passing unit tests.\n\n"
+            "Your deliverable is: working implementation code + create unit tests + passing unit tests.\n\n"
             "RULES:\n"
             "• Use 'read_file' to examine existing code.\n"
             "• Use 'write_file' to create or modify ANY file. "
@@ -323,8 +324,9 @@ def coding_agent_node(state: GraphState) -> dict:
             "1. Read any relevant existing files with 'read_file'.\n"
             "2. Write the implementation file(s) with 'write_file'.\n"
             "3. Write unit tests covering all logic branches with 'write_file'.\n"
-            "4. Run the tests with 'run_tests'.\n"
-            "5. If any test fails, fix the code and repeat from step 4.\n"
+            "4. All unit tests must be be generated and pass before proceeding.\n"
+            "5. Run the tests with 'run_tests'.\n"
+            "6. If any test fails, fix the code and repeat from step 4.\n"
             "NEGATIVE RULES (CRITICAL):\n"
             "- DO NOT write functional, E2E, or performance tests here.\n"
             "- DO NOT create two identical files with different names.\n"
