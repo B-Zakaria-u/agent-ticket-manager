@@ -1,25 +1,31 @@
-"""Issue Scout Agent — SRP: GitHub issue discovery, assignment, and repo setup.
+"""Issue Scout Agent — SRP: GitHub/GitLab issue discovery, assignment, and repo setup."""
+from __future__ import annotations
 
-This agent is the autonomous entry point of the pipeline. It:
-1. Lists open, unassigned issues on the configured GitHub repo.
-2. Picks the first issue (LLM selects the most actionable one).
-3. Self-assigns the issue so no parallel run picks the same ticket.
-4. Clones / pulls the repository into workspace/.
-5. Creates a fix branch named ``fix/issue-<N>-<slug>``.
-6. Populates state with ticket_text, issue_number, branch_name, repo_url.
-"""
+import logging
 import os
 import re
+from typing import Any
 
+# Import both clients
+import gitlab
 from github import Github
+from langchain_core.tools import tool
 
-from src.agents.base import BaseAgentNode
-from src.config.llm import get_llm
-from src.state import GraphState
-from src.tools.github.issue_tools import list_open_issues, assign_issue
-from src.tools.github.git_tools import clone_or_pull_repo, create_branch
-from src.utils.logger import log_llm_interaction, log_chat_interaction
-from langchain_core.messages import SystemMessage, HumanMessage
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+from src.agents.base_agent import BaseAgent
+from src.state import AgentReport, GraphState
+# Generic git tools
+from src.tools.git.git_tools import clone_or_pull_repo, create_branch
+
+# Provider-specific issue tools
+REPOSITORY_TYPE = os.environ.get("REMOTE_REPOSITORY", "GITLAB").upper()
+
+if REPOSITORY_TYPE == "GITLAB":
+    from src.tools.gitlab.issue_tools import assign_issue, list_open_issues
+else:
+    from src.tools.github.issue_tools import assign_issue, list_open_issues
 
 
 def _slugify(text: str, max_len: int = 40) -> str:
@@ -28,104 +34,119 @@ def _slugify(text: str, max_len: int = 40) -> str:
     return slug[:max_len]
 
 
-class IssueScoutAgent(BaseAgentNode):
-    """Autonomous GitHub issue picker and repository bootstrapper."""
+class IssueScoutAgent(BaseAgent):
+    """Autonomous issue picker and repository bootstrapper for GitHub and GitLab."""
 
-    def run(self, state: GraphState) -> dict:
-        llm = get_llm()
-        all_tools = [list_open_issues, assign_issue, clone_or_pull_repo, create_branch]
-        llm_with_tools = llm.bind_tools(all_tools)
-        log_file_path = state.get("log_file_path", "")
-        chat_log_file_path = state.get("chat_log_file_path", "")
-        total_tokens = state.get("total_tokens", 0)
+    agent_name = "issue_scout"
+    uses_tests = False
 
-        # ── Step 1: fetch issues ─────────────────────────────────────────────
-        print("[ Issue Scout ] Fetching open unassigned issues from GitHub...")
-        issues_text = list_open_issues.invoke({"max_results": 10})
+    def __init__(self) -> None:
+        super().__init__()
+        self._issue_number: int = 0
+        self._branch_name: str = ""
+        self._repo_url: str = ""
+        self._ticket_text: str = ""
+        self._completed: bool = False
 
-        if "No open" in issues_text:
-            print("[ Issue Scout ] No open unassigned issues found. Stopping workflow.")
-            # Nothing to work on — return neutral state so graph can END
-            return {
-                "ticket_text": "",
-                "issue_number": 0,
-                "branch_name": "",
-                "repo_url": "",
-            }
+    async def build_context(self, state: GraphState) -> dict[str, Any]:
+        return dict()
 
-        # ── Step 2: LLM picks the best issue ────────────────────────────────
-        pick_messages = [
-            SystemMessage(content=(
-                "You are an autonomous developer agent. "
-                "From the list of open GitHub issues below, pick the single most "
-                "actionable and self-contained one for a coding fix. "
-                "Respond with ONLY the issue number as a plain integer, nothing else."
-            )),
-            HumanMessage(content=issues_text),
+    async def get_tools(self, state: GraphState) -> list:
+        agent = self
+            
+        @tool
+        def submit_scout_results(issue_number: int) -> str:
+            """Submit the scout run results after picking an issue, assigning it, 
+            cloning the repo, and creating a new branch.
+            """
+            # At the top of submit_scout_results, before any API call:
+            if issue_number <= 0:
+                agent._completed = False
+                return "Scout aborted: no unassigned issues available in the project."
+
+            repo_type = REPOSITORY_TYPE
+            
+            if repo_type == "GITLAB":
+                token = os.environ.get("GITLAB_TOKEN")
+                repo_id = os.environ.get("GITLAB_REPOSITORY") # GitLab often uses ID or path
+                url = os.environ.get("GITLAB_URL", "https://gitlab.com")  #Change to your gitlab url if not using gitlab.com
+            else:
+                token = os.environ.get("GITHUB_TOKEN")
+                repo_id = os.environ.get("GITHUB_REPOSITORY")
+
+            if not token or not repo_id:
+                return f"{repo_type}_TOKEN or project identifier is missing."
+
+            try:
+                if repo_type == "GITLAB":
+                    gl = gitlab.Gitlab(url, private_token=token)
+                    gl.auth()
+                    project = gl.projects.get(repo_id)
+                    issue = project.issues.get(issue_number)
+                    
+                    # GitLab specific mapping
+                    agent._ticket_text = f"#{issue.iid} — {issue.title}\n\n{issue.description or ''}"
+                    agent._repo_url = project.http_url_to_repo
+                else:
+                    gh = Github(token)
+                    repo = gh.get_repo(repo_id)
+                    issue = repo.get_issue(issue_number)
+                    
+                    # GitHub specific mapping
+                    agent._ticket_text = f"#{issue.number} — {issue.title}\n\n{issue.body or ''}"
+                    agent._repo_url = repo.clone_url
+
+                agent._issue_number = issue_number
+                slug = _slugify(issue.title)
+                agent._branch_name = f"fix/issue-{issue_number}-{slug}"
+                agent._completed = True
+                agent._files_written = True 
+                
+                
+                return f"""
+                Scout results successfully submitted for issue #{issue_number}.
+                The current remote repository is {agent._repo_url}.
+                The current branch is {agent._branch_name}.
+                The current ticket text is {agent._ticket_text}.
+                """
+
+            except Exception as e:
+                logger.error(f"Error fetching issue details: {e}", exc_info=True)
+                return f"Error fetching issue details: {e}"
+
+        return [
+            list_open_issues,
+            assign_issue,
+            clone_or_pull_repo,
+            create_branch,
+            submit_scout_results,
         ]
-        
-        if chat_log_file_path:
-            log_chat_interaction(chat_log_file_path, "Issue Scout", pick_messages)
 
-        print("[ Issue Scout ] Asking LLM to pick the best issue...")
-        pick_response = llm.invoke(pick_messages)
-
-        # Extract token usage
-        usage = pick_response.usage_metadata or {}
-        p_tokens = usage.get("input_tokens", 0)
-        c_tokens = usage.get("output_tokens", 0)
-
-        if log_file_path:
-            model_name = getattr(llm, "model_name", "unknown-model")
-            log_llm_interaction(log_file_path, "Issue Scout", model_name, p_tokens, c_tokens)
-
-        raw = pick_response.content
-        if isinstance(raw, list):
-            raw = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in raw)
-        raw = str(raw).strip()
-        match = re.search(r"\d+", raw)
-        if not match:
-            return {"ticket_text": "", "issue_number": 0, "branch_name": "", "repo_url": ""}
-
-        issue_number = int(match.group())
-
-        # ── Step 3: self-assign the issue ────────────────────────────────────
-        print(f"[ Issue Scout ] Selected issue #{issue_number}. Assigning to self...")
-        assign_issue.invoke({"issue_number": issue_number})
-
-        # ── Step 4: fetch full issue body via PyGithub ───────────────────────
-        token = os.environ.get("GITHUB_TOKEN", "")
-        repo_name = os.environ.get("GITHUB_REPOSITORY", "")
-        gh = Github(token)
-        repo = gh.get_repo(repo_name)
-        issue = repo.get_issue(issue_number)
-        ticket_text = f"#{issue.number} — {issue.title}\n\n{issue.body or ''}"
-        repo_url = repo.clone_url                          # https://github.com/org/repo.git
-        slug = _slugify(issue.title)
-        branch_name = f"fix/issue-{issue_number}-{slug}"
-
-        # ── Step 5: clone / pull repo ────────────────────────────────────────
-        print(f"[ Issue Scout ] Cloning/pulling repository: {repo_url} ...")
-        clone_or_pull_repo.invoke({"repo_url": repo_url})
-
-        # ── Step 6: create fix branch ────────────────────────────────────────
-        print(f"[ Issue Scout ] Creating local fix branch: {branch_name} ...")
-
-        try:
-            create_branch.invoke({"branch_name": branch_name, "repo_url": repo_url})
-        except Exception as e:
-            # If it fails even with idempotency (e.g. repo name mismatch), we log and raise
-            raise e
-
+    async def extra_state_updates(self, state: GraphState) -> dict[str, Any]:
         return {
-            "ticket_text": ticket_text,
-            "issue_number": issue_number,
-            "branch_name": branch_name,
-            "repo_url": repo_url,
-            "iteration_count": 0,
-            "total_tokens": total_tokens + p_tokens + c_tokens
+            "ticket_text": self._ticket_text,
+            "issue_number": self._issue_number,
+            "branch_name": self._branch_name,
+            "repo_url": self._repo_url,
         }
 
+    async def build_report(
+        self,
+        *,
+        status: str,
+        summary: str,
+        state: GraphState,
+        tokens: int,
+    ) -> AgentReport:
+        base = await super().build_report(
+            status=status, summary=summary, state=state, tokens=tokens,
+        )
+        if self._completed:
+            base["summary"] = f"Successfully scouted issue #{self._issue_number}."
+            base["status"] = "success"
+        else:
+            base["status"] = "failed"
+        return base
 
-# LangGraph node callable (used in graph.py)
-issue_scout_node = IssueScoutAgent()
+async def issue_scout_node(state: GraphState) -> dict:
+    return await IssueScoutAgent().run(state)

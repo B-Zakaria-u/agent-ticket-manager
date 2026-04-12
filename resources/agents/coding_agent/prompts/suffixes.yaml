@@ -1,0 +1,6 @@
+base: |
+  Last test output:
+  {test_output_tail}
+
+sandbox_error: "Sandbox/environment error — fix script.sh dependencies."
+fix_hint: "Fix failing tests. Read the implementation file first."

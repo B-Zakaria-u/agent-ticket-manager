@@ -1,0 +1,5 @@
+verbose: "SYSTEM NUDGE: Use 'write_file' to create tests/ files and script.sh. Call the tool NOW."
+compact: "SYSTEM NUDGE: Use 'write_file' to create tests/ files and script.sh. Call the tool NOW."
+
+# testing agent has no run_tests step — this key is required by BaseAgent but unused
+tests_not_run: ""

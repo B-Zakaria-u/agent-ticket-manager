@@ -42,13 +42,8 @@ def _base_state(ticket_text: str = "") -> dict:
     }
 
 
-def _extract_final(outputs: list[dict]) -> RunResponse:
-    final: dict = {}
-    for o in outputs:
-        node_name = list(o.keys())[0]
-        print(f"[pipeline] Node complete: {node_name}")
-        for v in o.values():
-            final.update(v)
+def _to_response(final: dict) -> RunResponse:
+    """Build a RunResponse from the final graph state dict."""
     print("[pipeline] Run finished.")
     return RunResponse(
         spec=final.get("spec") or "",
@@ -63,11 +58,11 @@ def _extract_final(outputs: list[dict]) -> RunResponse:
 
 
 async def _sse_stream(graph, initial_state: dict) -> AsyncGenerator[str, None]:
-    for output in graph.stream(initial_state):
+    compiled = graph.compile()
+    async for output in compiled.astream(initial_state):
         node_name = list(output.keys())[0]
         print(f"[pipeline] Node stream: {node_name}")
         yield f"data: [node:{node_name}] {output[node_name]}\n\n"
-        await asyncio.sleep(0)
     print("[pipeline] Streaming run finished.")
 
 
@@ -93,15 +88,15 @@ async def run_manual(request: TicketRequest) -> RunResponse:
     initial_state["log_file_path"] = log_path
     initial_state["chat_log_file_path"] = chat_log_path
 
-    graph = build_graph()
-    outputs = list(graph.stream(initial_state))
-    return _extract_final(outputs)
+    graph = build_graph().compile()
+    final = await graph.ainvoke(initial_state)
+    return _to_response(final)
 
 
 @router.post("/auto", response_model=RunResponse)
 async def run_auto() -> RunResponse:
     """
-    Fully autonomous run — the Issue Scout picks an open GitHub issue,
+    Fully autonomous run — the Issue Scout picks an open issue,
     self-assigns it, clones the repo, and the pipeline fixes and pushes it.
     """
     initial_state = _base_state()
@@ -114,9 +109,9 @@ async def run_auto() -> RunResponse:
     initial_state["log_file_path"] = log_path
     initial_state["chat_log_file_path"] = chat_log_path
 
-    graph = build_graph()
-    outputs = list(graph.stream(initial_state))
-    return _extract_final(outputs)
+    graph = build_graph().compile()
+    final = await graph.ainvoke(initial_state)
+    return _to_response(final)
 
 
 @router.post("/stream")
@@ -147,7 +142,7 @@ async def stream_manual(request: TicketRequest) -> StreamingResponse:
 
 @router.post("/auto/stream")
 async def stream_auto() -> StreamingResponse:
-    """Stream the fully autonomous GitHub issue-driven run as SSE."""
+    """Stream the fully autonomous issue-driven run as SSE."""
     initial_state = _base_state()
     log_path, chat_log_path = log_request_start(
         endpoint="/run/auto/stream",
@@ -178,6 +173,6 @@ async def merge_request():
     initial_state["log_file_path"] = log_path
     initial_state["chat_log_file_path"] = chat_log_path
 
-    graph = build_graph()
-    outputs = list(graph.stream(initial_state))
-    return _extract_final(outputs)
+    graph = build_graph().compile()
+    final = await graph.ainvoke(initial_state)
+    return _to_response(final)

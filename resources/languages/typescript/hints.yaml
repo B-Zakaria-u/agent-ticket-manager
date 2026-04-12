@@ -1,0 +1,10 @@
+docker_image: "node:20-bookworm-slim"
+framework: "Jest + ts-jest or Vitest"
+file_pattern: "<module>.test.ts in __tests__/ or alongside source"
+convention: >
+  Use TypeScript idioms: strict types, interfaces, generics.
+  Use Jest or Vitest for tests. Follow the project's tsconfig.json.
+script_hint: |
+  #!/bin/bash
+  cd /workspace/{workspace_path} && npm install
+  npm test

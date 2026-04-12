@@ -1,72 +1,232 @@
-from langgraph.graph import StateGraph, END
+"""
+src/graph.py — LangGraph graph with dynamic orchestrator routing.
 
-from src.state import GraphState
+Flow
+----
+
+                        ┌──────────────┐
+    START ─────────────►│ orchestrator │◄─────────────────────────────┐
+                        └──────┬───────┘                              │
+                               │  next_node                           │
+                    ┌──────────┼──────────┐─────────────┐             │
+                    ▼          ▼          ▼             ▼             │
+              spec_agent  coding_agent  testing_agent  pr_agent       │
+                    │          │          │             │             │
+                    └──────────┴──────────┴─────────────┘             │
+                                          │                           │
+                                          └──► orchestrator ──────────┘
+                                               (reads inbox, sets next_node)
+                                                         │
+                                              next_node="end"
+                                                         │
+                                                        END
+
+Special nodes
+─────────────
+  "retry"        → re-invoke the same agent (tracked via retry_counts in state)
+  "human_review" → interrupt_before so a human can inspect / modify state
+"""
+from __future__ import annotations
+
+from langgraph.graph import END, START, StateGraph
+
+from src.agents.coding_agent import CodingAgent
 from src.agents.orchestrator_agent import orchestrator_agent_node
-from src.agents.issue_scout.agent import issue_scout_node
-from src.agents.spec_agent import spec_agent_node
-from src.agents.testing_agent import testing_agent_node
-from src.agents.coding_agent import coding_agent_node
-from src.agents.pr.agent import pr_agent_node
+from src.agents.testing_agent import TestingAgent
+from src.agents.issue_scout.agent import IssueScoutAgent
+from src.state import GraphState
+
+# Import optional agents (add yours here)
+try:
+    from src.agents.spec_agent import SpecAgent
+    _HAS_SPEC = True
+except ImportError:
+    _HAS_SPEC = False
+
+try:
+    from src.agents.pr.agent import PRAgent
+    _HAS_PR = True
+except ImportError:
+    _HAS_PR = False
 
 
-def router_node(state: GraphState) -> dict:
-    """
-    Determines the next agent from the dynamic pipeline.
-    """
-    pipeline = state.get("pipeline", [])
-    step = state.get("pipeline_step", 0)
+# ── Agent node wrappers ───────────────────────────────────────────────────────
+async def _issue_scout_node(state: GraphState) -> dict:
+    return await IssueScoutAgent().run(state)
 
-    if not pipeline or step >= len(pipeline):
-        print("[ Router ] Pipeline empty or complete. Transitioning to END.")
-        return {"next_agent": END}
+async def _coding_node(state: GraphState) -> dict:
+    return await CodingAgent().run(state)
 
-    next_agent = pipeline[step]
-    print(f"[ Router ] Next agent in pipeline: {next_agent} (step {step + 1}/{len(pipeline)})")
-    
+
+async def _testing_node(state: GraphState) -> dict:
+    return await TestingAgent().run(state)
+
+
+async def _spec_node(state: GraphState) -> dict:
+    if _HAS_SPEC:
+        return await SpecAgent().run(state)
+    # Fallback: pass-through if SpecAgent not implemented yet
+    print("[ Graph ] SpecAgent not found — skipping to coding_agent.")
     return {
-        "next_agent": next_agent,
-        "pipeline_step": step + 1
+        "orchestrator_inbox": {
+            "agent": "spec_agent",
+            "status": "success",
+            "summary": "Spec agent skipped (not implemented).",
+            "artifacts": [],
+            "issues": [],
+            "suggestions": ["proceed_to_next_pipeline_step"],
+            "tokens": 0,
+        },
+        "agent_reports": (state.get("agent_reports") or [])
+        + [
+            {
+                "agent": "spec_agent",
+                "status": "success",
+                "summary": "Skipped.",
+                "tokens": 0,
+            }
+        ],
     }
 
 
-def _route_dynamic(state: GraphState) -> str:
-    """Route to the next agent specified by the router node."""
-    return state.get("next_agent", END)
+async def _pr_node(state: GraphState) -> dict:
+    if _HAS_PR:
+        return await PRAgent().run(state)
+    print("[ Graph ] PRAgent not found — ending pipeline.")
+    return {
+        "orchestrator_inbox": {
+            "agent": "pr_agent",
+            "status": "success",
+            "summary": "PR agent skipped (not implemented).",
+            "artifacts": [],
+            "issues": [],
+            "suggestions": ["proceed_to_next_pipeline_step"],
+            "tokens": 0,
+        },
+    }
 
 
-def _route_coding(state: GraphState) -> str:
-    if state.get("tests_passed", False) or state.get("iteration_count", 0) >= 3:
-        return "Router"
-    return "Coding Agent"
+# ── Retry wrapper ─────────────────────────────────────────────────────────────
+
+_AGENT_NODE_MAP = {
+    "issue_scout":   _issue_scout_node,
+    "spec_agent":    _spec_node,
+    "coding_agent":  _coding_node,
+    "testing_agent": _testing_node,
+    "pr_agent":      _pr_node,
+}
 
 
-def build_graph():
-    """Compile and return the LangGraph workflow."""
-    workflow = StateGraph(GraphState)
+async def _retry_node(state: GraphState) -> dict:
+    """
+    Re-run whichever agent last reported into orchestrator_inbox.
+    The orchestrator already incremented retry_counts before routing here.
+    """
+    inbox      = state.get("orchestrator_inbox") or {}
+    agent_name = inbox.get("agent", "")
+    node_fn    = _AGENT_NODE_MAP.get(agent_name)
 
-    # ── Nodes ────────────────────────────────────────────────────────────────
-    workflow.add_node("Orchestrator Agent", orchestrator_agent_node)
-    workflow.add_node("Issue Scout",    issue_scout_node)
-    workflow.add_node("Spec Agent",     spec_agent_node)
-    workflow.add_node("Testing Agent",  testing_agent_node)
-    workflow.add_node("Coding Agent",   coding_agent_node)
-    workflow.add_node("PR Agent",       pr_agent_node)
-    workflow.add_node("Router",          router_node)
+    if node_fn is None:
+        print(f"[ Graph ] Retry requested for unknown agent '{agent_name}' — ending.")
+        return {"next_node": "end"}
 
-    # ── Entry point ───────────────────────────────────────────────────────────
-    workflow.set_entry_point("Orchestrator Agent")
+    print(f"[ Graph ] Retrying '{agent_name}'...")
+    return await node_fn(state)
 
-    # ── Edges ─────────────────────────────────────────────────────────────────
-    workflow.add_edge("Orchestrator Agent", "Router")
-    
-    # After each agent, go back to Router to get the next one
-    workflow.add_edge("Issue Scout", "Router")
-    workflow.add_edge("Spec Agent", "Router")
-    workflow.add_edge("Testing Agent", "Router")
-    workflow.add_conditional_edges("Coding Agent", _route_coding)
-    workflow.add_edge("PR Agent", "Router")
-    
-    # Router decides the next step
-    workflow.add_conditional_edges("Router", _route_dynamic)
 
-    return workflow.compile()
+# ── Conditional edge: orchestrator → next node ────────────────────────────────
+
+def _route(state: GraphState) -> str:
+    """Read next_node from state and return the node name for LangGraph."""
+    node = state.get("next_node") or "end"
+    print(f"[ Graph ] Routing → {node}")
+    return node
+
+
+# ── Graph builder ─────────────────────────────────────────────────────────────
+
+def build_graph() -> StateGraph:
+    g = StateGraph(GraphState)
+
+    # ── Nodes ─────────────────────────────────────────────────────────────────
+    g.add_node("orchestrator",  orchestrator_agent_node)
+    g.add_node("issue_scout",   _issue_scout_node)
+    g.add_node("spec_agent",    _spec_node)
+    g.add_node("coding_agent",  _coding_node)
+    g.add_node("testing_agent", _testing_node)
+    g.add_node("pr_agent",      _pr_node)
+    g.add_node("retry",         _retry_node)
+    g.add_node("human_review",  _human_review_node)   # interrupt_before set below
+
+    # ── Edges: START → orchestrator ───────────────────────────────────────────
+    g.add_edge(START, "orchestrator")
+
+    # ── Conditional edge: orchestrator → wherever ─────────────────────────────
+    g.add_conditional_edges(
+        "orchestrator",
+        _route,
+        {
+            "issue_scout":   "issue_scout",
+            "spec_agent":    "spec_agent",
+            "coding_agent":  "coding_agent",
+            "testing_agent": "testing_agent",
+            "pr_agent":      "pr_agent",
+            "retry":         "retry",
+            "human_review":  "human_review",
+            "end":           END,
+        },
+    )
+
+    # ── All agent nodes feed back into orchestrator ───────────────────────────
+    for agent_node in ("issue_scout", "spec_agent", "coding_agent", "testing_agent", "pr_agent", "retry"):
+        g.add_edge(agent_node, "orchestrator")
+
+    # human_review can also return to orchestrator once a human has acted
+    g.add_edge("human_review", "orchestrator")
+
+    return g
+
+
+async def _human_review_node(state: GraphState) -> dict:
+    """
+    Placeholder human-review node.
+    In production, LangGraph's interrupt_before mechanism pauses here
+    so an external system / human can inspect and modify state before
+    the graph resumes toward orchestrator.
+    """
+    inbox = state.get("orchestrator_inbox", {})
+    print(
+        f"\n{'='*60}\n"
+        f"[ HUMAN REVIEW REQUIRED ]\n"
+        f"Agent : {inbox.get('agent')}\n"
+        f"Status: {inbox.get('status')}\n"
+        f"Issues:\n"
+        + "\n".join(f"  - {i}" for i in inbox.get("issues", []))
+        + f"\n{'='*60}\n"
+    )
+    # The human modifies state externally; we just pass through.
+    # Set next_node to a safe default so the orchestrator re-evaluates.
+    return {"next_node": "orchestrator", "orchestrator_inbox": {}}
+
+
+# ── Compiled graph (with human-review interrupt) ──────────────────────────────
+
+def compile_graph(checkpointer=None):
+    """
+    Returns a compiled LangGraph app.
+
+    Pass a LangGraph checkpointer (e.g. MemorySaver) to enable persistence
+    and human-in-the-loop interrupts.
+
+    Example:
+        from langgraph.checkpoint.memory import MemorySaver
+        app = compile_graph(checkpointer=MemorySaver())
+        result = await app.ainvoke(initial_state, config={"configurable": {"thread_id": "1"}})
+    """
+    graph = build_graph()
+    kwargs: dict = {}
+    if checkpointer:
+        kwargs["checkpointer"]    = checkpointer
+        kwargs["interrupt_before"] = ["human_review"]
+
+    return graph.compile(**kwargs)

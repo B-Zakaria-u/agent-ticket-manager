@@ -205,11 +205,16 @@ _FRAMEWORK_DETECTORS = {
 }
 
 
-def detect_language(workspace_path: str) -> dict[str, str]:
+def detect_language(workspace_path: str, hint: str | None = None) -> dict[str, str]:
     """Detect the dominant programming language and framework in *workspace_path*.
+
+    If *hint* is provided (e.g. the user's spec), the detector will also
+    check whether the hint implies a different language/framework than what's
+    on disk, and return the most likely combination.
 
     Args:
         workspace_path: Absolute or relative path to the workspace root.
+        hint: Optional text (e.g. spec) to guide detection.
 
     Returns:
         A dict: ``{"language": "<Language>", "framework": "<Framework>"}``
@@ -231,5 +236,20 @@ def detect_language(workspace_path: str) -> dict[str, str]:
     # Detect framework
     detector = _FRAMEWORK_DETECTORS.get(language)
     framework = detector(workspace_path) if detector else "Unknown"
+
+    # If a hint is provided, check if it implies a different stack
+    if hint:
+        hint_lower = hint.lower()
+
+        # Check for framework keywords in hint
+        for lang, detector in _FRAMEWORK_DETECTORS.items():
+            if lang.lower() in hint_lower:
+                hint_framework = detector(workspace_path)
+                if hint_framework != "Unknown":
+                    # If hint clearly points to a different framework, prefer it
+                    if framework == "Unknown" or hint_framework != framework:
+                        language = lang
+                        framework = hint_framework
+                        break
 
     return {"language": language, "framework": framework}

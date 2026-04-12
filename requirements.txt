@@ -5,8 +5,9 @@ langchain-groq
 langchain-openrouter
 langgraph
 docker
-python-dotenv
 pytest
+python-dotenv
+python-gitlab
 PyGithub
 gitpython
 duckduckgo-search
@@ -16,3 +17,4 @@ fastapi
 uvicorn[standard]
 ddgs
 langchain-openai
+langchain-mcp-adapters

@@ -1,0 +1,11 @@
+docker_image: "eclipse-temurin:21-jdk"
+framework: "JUnit 5 + Mockito"
+file_pattern: "<Module>Test.java in src/test/java/"
+convention: >
+  Use Java idioms: proper access modifiers, JavaDoc comments, and follow
+  standard Maven/Gradle project layout (src/main/java, src/test/java).
+  Use JUnit 5 + Mockito for tests.
+script_hint: |
+  #!/bin/bash
+  cd /workspace/{workspace_path} && mvn test -B
+  # OR: ./gradlew test

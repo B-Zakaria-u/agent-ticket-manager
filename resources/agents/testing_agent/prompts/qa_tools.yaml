@@ -1,0 +1,94 @@
+selenium:
+  concern: "Web UI interaction, button clicks, form submission, DOM validation, navigation"
+  install: "pip install selenium webdriver-manager pytest"
+  script_hint: |
+    #!/bin/bash
+    pip install selenium webdriver-manager pytest
+    cd /workspace/{workspace_path} && pytest -v tests/test_ui_*
+
+playwright:
+  concern: "Modern web UI, cross-browser E2E, screenshot/visual regression, JS-heavy SPAs"
+  install: "pip install playwright pytest-playwright && playwright install"
+  script_hint: |
+    #!/bin/bash
+    pip install playwright pytest-playwright
+    playwright install --with-deps chromium
+    cd /workspace/{workspace_path} && pytest -v tests/test_e2e_*
+
+cypress:
+  concern: "JavaScript/TypeScript front-end E2E, real-time reload, component testing"
+  install: "npm install cypress --save-dev"
+  script_hint: |
+    #!/bin/bash
+    apt-get update -y && apt-get install -y nodejs npm 2>/dev/null
+    cd /workspace/{workspace_path} && npm install
+    npx cypress run
+
+appium:
+  concern: "Native/hybrid mobile app testing (iOS & Android), gestures, device simulation"
+  install: "pip install Appium-Python-Client pytest"
+  script_hint: |
+    #!/bin/bash
+    pip install Appium-Python-Client pytest
+    # Appium server must be running: appium &
+    cd /workspace/{workspace_path} && pytest -v tests/test_mobile_*
+
+jmeter:
+  concern: "Load testing, stress testing, throughput, latency, API performance at scale"
+  install: "apt-get install -y default-jre && wget apache-jmeter archive"
+  script_hint: |
+    #!/bin/bash
+    apt-get update -y && apt-get install -y default-jre wget tar 2>/dev/null
+    wget -q https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
+    tar -xzf apache-jmeter-5.6.3.tgz
+    cd /workspace/{workspace_path} && ../apache-jmeter-5.6.3/bin/jmeter -n -t tests/load_test.jmx -l results.jtl
+
+locust:
+  concern: "Python-native load/stress testing, concurrent users, ramp-up scenarios"
+  install: "pip install locust"
+  script_hint: |
+    #!/bin/bash
+    pip install locust
+    cd /workspace/{workspace_path} && locust -f tests/locustfile.py --headless -u 100 -r 10 --run-time 1m
+
+requests_pytest:
+  concern: "REST/GraphQL API contract testing, status codes, response schema, auth flows"
+  install: "pip install requests pytest jsonschema"
+  script_hint: |
+    #!/bin/bash
+    pip install requests pytest jsonschema
+    cd /workspace/{workspace_path} && pytest -v tests/test_api_*
+
+postman_newman:
+  concern: "Existing Postman collections, CI-friendly API regression runs"
+  install: "npm install -g newman"
+  script_hint: |
+    #!/bin/bash
+    apt-get update -y && apt-get install -y nodejs npm 2>/dev/null
+    npm install -g newman
+    cd /workspace/{workspace_path} && newman run tests/collection.json -e tests/environment.json
+
+owasp_zap:
+  concern: "Security scanning, XSS, SQL injection, OWASP Top-10 vulnerability detection"
+  install: "docker pull ghcr.io/zaproxy/zaproxy:stable"
+  script_hint: |
+    #!/bin/bash
+    apt-get update -y && apt-get install -y docker.io 2>/dev/null
+    docker run -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://target-url
+
+axe_playwright:
+  concern: "WCAG accessibility compliance, screen-reader compatibility, colour contrast"
+  install: "pip install playwright pytest-playwright axe-playwright-python"
+  script_hint: |
+    #!/bin/bash
+    pip install playwright pytest-playwright axe-playwright-python
+    playwright install --with-deps chromium
+    cd /workspace/{workspace_path} && pytest -v tests/test_accessibility_*
+
+db_pytest:
+  concern: "Data integrity, migrations, stored procedures, query correctness"
+  install: "pip install pytest sqlalchemy psycopg2-binary"
+  script_hint: |
+    #!/bin/bash
+    pip install pytest sqlalchemy psycopg2-binary
+    cd /workspace/{workspace_path} && pytest -v tests/test_db_*

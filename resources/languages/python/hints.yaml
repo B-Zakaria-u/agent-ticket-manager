@@ -1,0 +1,12 @@
+docker_image: "python:3.13-slim"
+framework: "pytest"
+file_pattern: "test_<module>.py in tests/"
+convention: >
+  Use Python idioms: type hints, dataclasses or Pydantic models, f-strings,
+  and follow PEP 8. Use pytest for tests.
+script_hint: |
+  #!/bin/bash
+  set -e
+  pip install --quiet -r requirements.txt 2>/dev/null \
+    || pip install --quiet django crispy-forms django-crispy-bootstrap5
+  python manage.py test --verbosity=2

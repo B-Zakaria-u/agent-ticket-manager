@@ -1,0 +1,7 @@
+docker_image: "ubuntu:latest"
+framework: "the standard test framework for the detected language"
+file_pattern: "tests/"
+convention: ""
+script_hint: |
+  #!/bin/bash
+  # Install dependencies and run unit tests

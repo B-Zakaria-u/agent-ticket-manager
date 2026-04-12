@@ -1,0 +1,9 @@
+docker_image: "eclipse-temurin:21-jdk"
+framework: "Kotest or JUnit 5"
+file_pattern: "<Module>Test.kt in src/test/kotlin/"
+convention: >
+  Use Kotlin idioms: data classes, extension functions, coroutines where appropriate.
+  Follow standard Gradle project layout. Use Kotest or JUnit 5 for tests.
+script_hint: |
+  #!/bin/bash
+  cd /workspace/{workspace_path} && ./gradlew test

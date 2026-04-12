@@ -1,0 +1,6 @@
+template: |
+  Detected language : {detected_language}{framework_suffix}
+  Conventions       : {lang_conventions}
+
+framework_suffix: |
+  / framework: {detected_framework}

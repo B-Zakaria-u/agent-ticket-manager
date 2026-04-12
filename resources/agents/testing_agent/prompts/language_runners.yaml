@@ -1,0 +1,31 @@
+Python:
+  runner: "pytest"
+  file_pattern: "tests/test_<concern>_*.py"
+
+Java:
+  runner: "mvn test"
+  file_pattern: "src/test/java/**/*Test.java"
+
+JavaScript:
+  runner: "npm test"
+  file_pattern: "tests/*.test.js"
+
+TypeScript:
+  runner: "npm test"
+  file_pattern: "tests/*.test.ts"
+
+PHP:
+  runner: "./vendor/bin/phpunit"
+  file_pattern: "tests/*Test.php"
+
+Ruby:
+  runner: "bundle exec rspec"
+  file_pattern: "spec/**/*_spec.rb"
+
+C#:
+  runner: "dotnet test"
+  file_pattern: "**/*Tests.cs"
+
+Go:
+  runner: "go test ./..."
+  file_pattern: "*_test.go"

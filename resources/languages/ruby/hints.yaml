@@ -1,0 +1,10 @@
+docker_image: "ruby:3.3-slim"
+framework: "RSpec or Minitest"
+file_pattern: "<module>_spec.rb in spec/ or test_<module>.rb in test/"
+convention: >
+  Use Ruby idioms: blocks, modules, descriptive method names.
+  Use RSpec or Minitest for tests. Follow Bundler conventions.
+script_hint: |
+  #!/bin/bash
+  cd /workspace/{workspace_path} && bundle install
+  bundle exec rspec

@@ -1,0 +1,7 @@
+verbose: >
+    SYSTEM NUDGE: You MUST call `submit_spec` to complete this task.
+    The workspace source is already provided above — you do not need read_file.
+    Analyse the code and ticket, then call submit_spec with your full specification.
+    Do NOT write the specification as plain text without calling submit_spec.
+ 
+compact: "Analyse the pre-loaded code and ticket, then call submit_spec with the full specification."

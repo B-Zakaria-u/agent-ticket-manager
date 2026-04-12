@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  agent-api:
+    build: .
+    container_name: agent_api_service
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the current directory to /app for live reloading and data persistence
+      - .:/app
+      # Exclude the virtual environment and node_modules from being mounted
+      - /app/.venv
+    environment:
+      # Expose IP address explicitly for uvicorn
+      - IP_ADDRESS=0.0.0.0
+    env_file:
+      - .env
+    restart: unless-stopped

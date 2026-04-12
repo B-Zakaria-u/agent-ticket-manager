@@ -1,0 +1,9 @@
+docker_image: "mcr.microsoft.com/dotnet/sdk:8.0"
+framework: "xUnit or NUnit"
+file_pattern: "<Module>Tests.cs in <ProjectName>.Tests/"
+convention: >
+  Use C# idioms: async/await, LINQ, proper exception handling.
+  Use xUnit or NUnit for tests. Follow .NET project conventions.
+script_hint: |
+  #!/bin/bash
+  cd /workspace/{workspace_path} && dotnet test

@@ -1,0 +1,35 @@
+verbose: |
+    ACTION: Write a robust technical specification for this ticket.
+ 
+    ## Ticket
+    {ticket_text}
+ 
+    {lang_note}
+ 
+    ## Workspace source files ({snapshot_file_count} files pre-loaded)
+    The following files have been read directly from disk for you.
+    You do NOT need to call `read_file` for these — the content is already here.
+    Only call `read_file` if you need a file that is missing from the snapshot below.
+ 
+    {workspace_snapshot}
+ 
+    ## Your workflow
+    1. Analyse the ticket requirements against the code above.
+    2. Identify exactly which files, classes, and methods need to change.
+    3. Write a comprehensive specification covering:
+       - Changes needed (files, classes, methods, signatures).
+       - Test strategy (test file names, frameworks, what each test asserts).
+       - Edge cases and error handling to address.
+       - A `script.sh` outline for running the project's tests.
+    4. Call `submit_spec` exactly once with the full specification text.
+       Do NOT describe the spec in plain text — you MUST call submit_spec.
+ 
+compact: |
+    Write a technical spec for this ticket:
+    {ticket_text}
+    {lang_note}
+
+    Workspace files ({snapshot_file_count} pre-loaded — no read_file needed):
+    {workspace_snapshot}
+
+    Analyse the code above, then call submit_spec with the full specification.

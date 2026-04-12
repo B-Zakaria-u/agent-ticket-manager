@@ -1,0 +1,41 @@
+verbose: |
+  ACTION: Implement the following specification.
+  {spec_text}
+  Workspace root is the current directory. 
+  All file paths must be strictly relative to it.
+  Existing files in workspace:
+  {file_list_str}
+  {lang_note}
+  UNIT TEST FRAMEWORK : {test_framework}
+  TEST FILE PATTERN   : {file_pattern}
+  script.sh template for running tests in docker for {detected_language}:
+  ```
+  {script_hint}
+  ```
+  WORKFLOW:
+   1. Attempt to read relevant existing files. If none exist, skip directly to step 2 — do NOT create empty files as a substitute.
+   2. Write the implementation file(s) with 'write_file'.
+   3. Write unit tests covering all logic branches with 'write_file'.
+   4. All unit tests must be be generated and pass before proceeding.
+   5. Run the tests with 'run_tests'.
+   6. If any test fails, fix the code and repeat from step 4.
+  NEGATIVE RULES (CRITICAL):
+  - DO NOT write functional, E2E, or performance tests here.
+  - DO NOT read, write, or reference script.sh — it is Docker infrastructure and is not part of your task.
+  - DO NOT create empty or placeholder files. Every write_file call must contain complete, functional code.
+  - If a file does not exist, that means you should create it with full implementation — not a stub.
+  - DO NOT create two identical files with different names.
+  - DO NOT duplicate code for the same functionality.
+  - DO NOT create stub implementations. Write the full logic on the first attempt.
+
+compact: |
+  Implement this spec:
+  {spec_text}
+  Workspace files:
+  {file_list_str}
+  Test pattern: {file_pattern}
+  script.sh template for executing tests in docker for {detected_language}:
+  ```
+  {script_hint}
+  ```
+  Steps: read relevant files → write implementation → write tests → run_tests → fix if failing.

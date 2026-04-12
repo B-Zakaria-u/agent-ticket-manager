@@ -1,0 +1,9 @@
+docker_image: "swift:5.10"
+framework: "XCTest"
+file_pattern: "<Module>Tests.swift in Tests/"
+convention: >
+  Use Swift idioms: optionals, value types, protocols.
+  Use XCTest for tests. Follow Swift Package Manager conventions.
+script_hint: |
+  #!/bin/bash
+  cd /workspace/{workspace_path} && swift test

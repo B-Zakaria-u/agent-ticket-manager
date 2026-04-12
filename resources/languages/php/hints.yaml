@@ -1,0 +1,11 @@
+docker_image: "php:8.3-cli"
+framework: "PHPUnit"
+file_pattern: "<Module>Test.php in tests/"
+convention: >
+  Use PHP idioms: PSR-12 coding standard, type declarations, namespaces.
+  Use PHPUnit for tests. Follow Composer project conventions.
+script_hint: |
+  #!/bin/bash
+  apt-get update -y && apt-get install -y php php-cli composer 2>/dev/null
+  cd /workspace/{workspace_path} && composer install --no-interaction
+  ./vendor/bin/phpunit --testdox

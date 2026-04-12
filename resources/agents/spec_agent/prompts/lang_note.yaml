@@ -1,0 +1,5 @@
+template: |
+  Detected workspace language: **{detected_language}**{framework_suffix}.
+  Ensure the specification uses conventions and test frameworks appropriate for this stack.
+ 
+framework_suffix: " / **{detected_framework}**"

@@ -1,0 +1,11 @@
+verbose: >
+  SYSTEM NUDGE: You MUST use tools to complete this task.
+  Call 'write_file' to create or update source code and test files,
+  and 'run_tests' to verify. Do NOT describe code in plain text.
+  Make sure all tests pass before finishing.
+
+compact: |
+  Use write_file to create code and tests, then run_tests to verify.
+
+tests_not_run: |
+  You wrote files but never called run_tests. Call run_tests now to verify.

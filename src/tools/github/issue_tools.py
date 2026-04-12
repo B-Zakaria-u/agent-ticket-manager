@@ -76,8 +76,14 @@ def assign_issue(issue_number: int) -> str:
         app_user = client.get_user().login
         repo = _get_repo(client)
         issue = repo.get_issue(issue_number)
+        if issue.assignees and any(a.login == app_user for a in issue.assignees):
+            return f"Issue #{issue_number} is already assigned to you {app_user}."
         issue.add_to_assignees(app_user)
-        return f"Issue #{issue_number} successfully assigned to @{app_user}."
+        # In assign_issue, update the return string:
+        return (
+            f"Issue #{issue_number} successfully assigned to @{client.user.username}. "
+            f"Repository URL: {repo.http_url_to_repo}"
+        )
 
     except GithubException as exc:
         return f"GitHub API error: {exc.data}"

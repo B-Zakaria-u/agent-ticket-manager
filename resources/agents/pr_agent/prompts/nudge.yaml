@@ -1,0 +1,2 @@
+verbose : |
+  You haven't submitted your PR URL results yet! Remember that after committing, pushing, and creating the pull request, you MUST invoke the `submit_pr_results` tool exactly once with the PR URL to save the state!

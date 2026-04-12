@@ -1,0 +1,11 @@
+docker_image: "node:20-bookworm-slim"
+framework: "Jest"
+file_pattern: "<module>.test.js in __tests__/ or alongside source"
+convention: >
+  Use modern JavaScript (ES2020+): const/let, arrow functions, async/await,
+  destructuring. Use Jest or Mocha for tests. Follow the project's existing
+  package.json scripts.
+script_hint: |
+  #!/bin/bash
+  cd /workspace/{workspace_path} && npm install
+  npm test

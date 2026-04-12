@@ -1,0 +1,9 @@
+verbose : |
+  You haven't submitted your results yet!
+  Remember that after picking an issue, assigning it, cloning the repo, and creating a branch.
+  You MUST invoke the `submit_scout_results` tool exactly once with the issue number to save the state!
+
+compact : |
+  You haven't submitted your results yet!
+  Remember that after picking an issue, assigning it, cloning the repo, and creating a branch.
+  You MUST invoke the `submit_scout_results` tool exactly once with the issue number to save the state!

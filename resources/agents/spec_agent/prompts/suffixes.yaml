@@ -1,0 +1,6 @@
+base: |
+  Previous feedback on the specification:
+  {test_output_tail}
+ 
+sandbox_error: "Environment error during spec validation."
+fix_hint: "Revise the specification based on the feedback above and call submit_spec again."
